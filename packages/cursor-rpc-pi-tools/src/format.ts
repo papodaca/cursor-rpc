@@ -1,3 +1,4 @@
+import { CursorRpcError } from "cursor-rpc";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +13,18 @@ export type TruncateResult = {
 };
 
 export type TruncateFn = (content: string, options?: { maxLines?: number; maxBytes?: number }) => TruncateResult;
+
+export type TruncationDeps = {
+  truncate: TruncateFn;
+  formatSize: (bytes: number) => string;
+  maxBytes: number;
+  maxLines: number;
+};
+
+export type ToolTextResult = {
+  content: Array<{ type: "text"; text: string }>;
+  details: Record<string, never>;
+};
 
 export type SearchDocument = {
   url: string;
@@ -32,6 +45,14 @@ export function buildYearGuidance(isoDate: string): string {
   ].join(" ");
 }
 
+export function truncationDescription(maxBytesLabel: string, maxLines: number): string {
+  return `Output is truncated to ${maxLines} lines or ${maxBytesLabel} (whichever is hit first). If truncated, the full output is saved to a temp file.`;
+}
+
+export function textResult(text: string): ToolTextResult {
+  return { content: [{ type: "text", text }], details: {} };
+}
+
 export function utcDateString(now: Date): string {
   return now.toISOString().slice(0, 10);
 }
@@ -47,23 +68,10 @@ export function formatSearchDocuments(documents: SearchDocument[]): string {
 }
 
 export function redactToolText(value: string): string {
-  return value
-    .replace(/Bearer\s+\S+/gi, "[redacted]")
-    .replace(/(authorization:\s*)(\S+)/gi, "$1[redacted]")
-    .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|verifier)\s*[:=]\s*\S+/gi, "$1=[redacted]")
-    .replace(/\bkey_[A-Za-z0-9_-]+\b/g, "[redacted]")
-    .replace(/https?:\/\/[^/@\s]+:[^/@\s]+@/gi, (match) => match.replace(/\/\/[^@]+@/, "//[redacted]@"));
+  return new CursorRpcError(value).message;
 }
 
-export async function applyTruncation(
-  text: string,
-  deps: {
-    truncate: TruncateFn;
-    formatSize: (bytes: number) => string;
-    maxBytes: number;
-    maxLines: number;
-  },
-): Promise<string> {
+export async function applyTruncation(text: string, deps: TruncationDeps): Promise<string> {
   const truncation = deps.truncate(text, { maxBytes: deps.maxBytes, maxLines: deps.maxLines });
   if (!truncation.truncated) {
     return truncation.content;

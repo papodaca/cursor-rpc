@@ -36,7 +36,7 @@ describe("format", () => {
   });
 
   it("appends an owner-only spill path when truncated", async () => {
-    const { stat } = await import("node:fs/promises");
+    const { readFile, stat } = await import("node:fs/promises");
     const text = await applyTruncation("hello", {
       truncate: () => ({
         content: "head",
@@ -56,7 +56,7 @@ describe("format", () => {
     const path = match?.[1] ?? "";
     const info = await stat(path);
     expect(info.mode & 0o077).toBe(0);
-    const spilled = await (await import("node:fs/promises")).readFile(path, "utf8");
+    const spilled = await readFile(path, "utf8");
     expect(spilled).toBe("hello");
     expect(spilled).not.toMatch(/CURSOR_/);
   });

@@ -24,7 +24,6 @@ export function createExtension(options: CreateExtensionOptions = {}) {
       formatSize,
       maxBytes: DEFAULT_MAX_BYTES,
       maxLines: DEFAULT_MAX_LINES,
-      maxBytesLabel: formatSize(DEFAULT_MAX_BYTES),
     };
     pi.registerTool(createWebFetchTool(shared));
     pi.registerTool(createWebSearchTool(shared));

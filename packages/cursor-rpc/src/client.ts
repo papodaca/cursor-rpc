@@ -1,3 +1,4 @@
+import { combineSignals } from "./abort.js";
 import { AuthenticationError } from "./errors.js";
 import { MemoryCredentialStore, type CredentialStore } from "./credentials.js";
 import { AuthSession } from "./auth/session.js";
@@ -307,17 +308,6 @@ function hasCredentials(
 
 function nonEmpty(value: string | undefined): boolean {
   return value !== undefined && value.trim() !== "";
-}
-
-function combineSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
-  const present = signals.filter((value): value is AbortSignal => value !== undefined);
-  if (present.length === 0) {
-    return undefined;
-  }
-  if (present.length === 1) {
-    return present[0];
-  }
-  return AbortSignal.any(present);
 }
 
 function agentToolHeaders(tools: ClientTools | undefined, run: ClientRunOptions): Headers {

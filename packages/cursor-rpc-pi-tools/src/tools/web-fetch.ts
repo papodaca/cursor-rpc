@@ -1,21 +1,22 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { CancelledError, type WebClient } from "cursor-rpc";
 import { Type } from "typebox";
-import { approveOrDeny } from "../approval.js";
-import { applyTruncation, redactToolText, type TruncateFn } from "../format.js";
+import { approveOrDeny, type ApprovalDeps } from "../approval.js";
+import {
+  applyTruncation,
+  redactToolText,
+  textResult,
+  truncationDescription,
+  type TruncationDeps,
+} from "../format.js";
 
 export type FetchToolDeps = {
   client: Pick<WebClient, "fetch">;
-  hasUI: boolean;
-  confirm: (title: string, message: string) => Promise<boolean>;
-  truncate: TruncateFn;
-  formatSize: (bytes: number) => string;
-  maxBytes: number;
-  maxLines: number;
-};
+} & Pick<ApprovalDeps, "hasUI" | "confirm"> &
+  TruncationDeps;
 
 export function fetchDescription(maxBytesLabel: string, maxLines: number): string {
-  return `Fetch a URL as Markdown through Cursor's authenticated web backend. Output is truncated to ${maxLines} lines or ${maxBytesLabel} (whichever is hit first). If truncated, the full output is saved to a temp file.`;
+  return `Fetch a URL as Markdown through Cursor's authenticated web backend. ${truncationDescription(maxBytesLabel, maxLines)}`;
 }
 
 export const webFetchParameters = Type.Object({
@@ -26,7 +27,7 @@ export async function executeWebFetch(
   params: { url: string },
   signal: AbortSignal | undefined,
   deps: FetchToolDeps,
-): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, never> }> {
+) {
   const url = params.url?.trim() ?? "";
   if (url.length === 0) {
     throw new Error("url is required");
@@ -57,11 +58,11 @@ export async function executeWebFetch(
   }
 }
 
-export function createWebFetchTool(deps: Omit<FetchToolDeps, "hasUI" | "confirm"> & { maxBytesLabel: string }) {
+export function createWebFetchTool(deps: Omit<FetchToolDeps, "hasUI" | "confirm">) {
   return defineTool({
     name: "web_fetch",
     label: "WebFetch",
-    description: fetchDescription(deps.maxBytesLabel, deps.maxLines),
+    description: fetchDescription(deps.formatSize(deps.maxBytes), deps.maxLines),
     promptSnippet: "Fetch a URL as Markdown with web_fetch",
     promptGuidelines: ["Use web_fetch when you need the Markdown content of a specific URL."],
     parameters: webFetchParameters,
@@ -72,8 +73,4 @@ export function createWebFetchTool(deps: Omit<FetchToolDeps, "hasUI" | "confirm"
         confirm: (title, message) => ctx.ui.confirm(title, message, signal ? { signal } : undefined),
       }),
   });
-}
-
-function textResult(text: string): { content: Array<{ type: "text"; text: string }>; details: Record<string, never> } {
-  return { content: [{ type: "text", text }], details: {} };
 }

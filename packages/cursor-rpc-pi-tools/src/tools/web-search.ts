@@ -1,29 +1,26 @@
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { CancelledError, type WebClient } from "cursor-rpc";
 import { Type } from "typebox";
-import { approveOrDeny } from "../approval.js";
+import { approveOrDeny, type ApprovalDeps } from "../approval.js";
 import {
   applyTruncation,
   buildYearGuidance,
   formatSearchDocuments,
   redactToolText,
+  textResult,
+  truncationDescription,
   utcDateString,
-  type TruncateFn,
+  type TruncationDeps,
 } from "../format.js";
 
 export type SearchToolDeps = {
   client: Pick<WebClient, "search">;
-  hasUI: boolean;
-  confirm: (title: string, message: string) => Promise<boolean>;
   now: () => Date;
-  truncate: TruncateFn;
-  formatSize: (bytes: number) => string;
-  maxBytes: number;
-  maxLines: number;
-};
+} & Pick<ApprovalDeps, "hasUI" | "confirm"> &
+  TruncationDeps;
 
 export function searchDescription(maxBytesLabel: string, maxLines: number): string {
-  return `Search the web through Cursor's authenticated backend. Output is truncated to ${maxLines} lines or ${maxBytesLabel} (whichever is hit first). If truncated, the full output is saved to a temp file.`;
+  return `Search the web through Cursor's authenticated backend. ${truncationDescription(maxBytesLabel, maxLines)}`;
 }
 
 export const webSearchParameters = Type.Object({
@@ -41,7 +38,7 @@ export async function executeWebSearch(
   params: { search_term: string },
   signal: AbortSignal | undefined,
   deps: SearchToolDeps,
-): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, never> }> {
+) {
   const term = params.search_term?.trim() ?? "";
   if (term.length === 0) {
     throw new Error("search_term is required");
@@ -71,13 +68,11 @@ export async function executeWebSearch(
   }
 }
 
-export function createWebSearchTool(
-  deps: Omit<SearchToolDeps, "hasUI" | "confirm"> & { maxBytesLabel: string },
-) {
+export function createWebSearchTool(deps: Omit<SearchToolDeps, "hasUI" | "confirm">) {
   return defineTool({
     name: "web_search",
     label: "WebSearch",
-    description: searchDescription(deps.maxBytesLabel, deps.maxLines),
+    description: searchDescription(deps.formatSize(deps.maxBytes), deps.maxLines),
     promptSnippet: "Search the web with web_search",
     promptGuidelines: searchGuidelines(deps.now()),
     parameters: webSearchParameters,
@@ -88,8 +83,4 @@ export function createWebSearchTool(
         confirm: (title, message) => ctx.ui.confirm(title, message, signal ? { signal } : undefined),
       }),
   });
-}
-
-function textResult(text: string): { content: Array<{ type: "text"; text: string }>; details: Record<string, never> } {
-  return { content: [{ type: "text", text }], details: {} };
 }

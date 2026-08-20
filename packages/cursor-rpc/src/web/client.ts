@@ -4,6 +4,7 @@ import { MemoryCredentialStore, type CredentialStore } from "../credentials.js";
 import type { FetchLike, TokenPair } from "../auth/api-key.js";
 import { AuthSession } from "../auth/session.js";
 import { resolveEnvironment } from "../env.js";
+import { combineSignals, raceWithAbort } from "../abort.js";
 import { AuthenticationError, CancelledError, CursorRpcError } from "../errors.js";
 import { AiService } from "../generated/aiserver/v1/ai_pb.js";
 import {
@@ -149,11 +150,13 @@ class WebClientImpl implements WebClient {
 
   async #modelId(signal?: AbortSignal): Promise<string> {
     this.#throwIfClosed(signal);
-    await this.#refreshBearer();
-    this.#throwIfClosed(signal);
-    this.#modelFlight ??= this.#resolveModelId();
+    if (this.#modelFlight === undefined) {
+      await this.#refreshBearer();
+      this.#throwIfClosed(signal);
+      this.#modelFlight ??= this.#resolveModelId();
+    }
     try {
-      const modelId = await this.#modelFlight;
+      const modelId = await raceWithAbort(this.#modelFlight, signal);
       this.#throwIfClosed(signal);
       return modelId;
     } catch (error) {
@@ -175,7 +178,7 @@ class WebClientImpl implements WebClient {
         return defaultId;
       }
     } catch (error) {
-      const mapped = error instanceof CursorRpcError ? error : mapTransportError(error);
+      const mapped = mapTransportError(error);
       this.#recordAuthFailure(mapped);
       throw mapped;
     }
@@ -188,7 +191,7 @@ class WebClientImpl implements WebClient {
         return first;
       }
     } catch (error) {
-      const mapped = error instanceof CursorRpcError ? error : mapTransportError(error);
+      const mapped = mapTransportError(error);
       this.#recordAuthFailure(mapped);
       throw mapped;
     }
@@ -208,7 +211,7 @@ class WebClientImpl implements WebClient {
       this.#throwIfClosed(signal);
       return await unaryCall(this.#transport, method, input, { signal });
     } catch (error) {
-      const mapped = error instanceof CursorRpcError ? error : mapTransportError(error);
+      const mapped = mapTransportError(error);
       this.#recordAuthFailure(mapped);
       throw mapped;
     }
@@ -244,15 +247,4 @@ class WebClientImpl implements WebClient {
       throw CancelledError.fromAbort(signal.reason);
     }
   }
-}
-
-function combineSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
-  const present = signals.filter((value): value is AbortSignal => value !== undefined);
-  if (present.length === 0) {
-    return undefined;
-  }
-  if (present.length === 1) {
-    return present[0];
-  }
-  return AbortSignal.any(present);
 }
