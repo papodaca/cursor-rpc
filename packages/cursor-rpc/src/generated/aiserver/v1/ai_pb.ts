@@ -2,16 +2,178 @@
 // @generated from file aiserver/v1/ai.proto (package aiserver.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { AvailableModelsRequestSchema, AvailableModelsResponseSchema, GetDefaultModelForCliRequestSchema, GetDefaultModelForCliResponseSchema, GetUsableModelsRequestSchema, GetUsableModelsResponseSchema } from "./models_pb.js";
 import { file_aiserver_v1_models } from "./models_pb.js";
+import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file aiserver/v1/ai.proto.
  */
 export const file_aiserver_v1_ai: GenFile = /*@__PURE__*/
-  fileDesc("ChRhaXNlcnZlci92MS9haS5wcm90bxILYWlzZXJ2ZXIudjEytwIKCUFpU2VydmljZRJcCg9HZXRVc2FibGVNb2RlbHMSIy5haXNlcnZlci52MS5HZXRVc2FibGVNb2RlbHNSZXF1ZXN0GiQuYWlzZXJ2ZXIudjEuR2V0VXNhYmxlTW9kZWxzUmVzcG9uc2USbgoVR2V0RGVmYXVsdE1vZGVsRm9yQ2xpEikuYWlzZXJ2ZXIudjEuR2V0RGVmYXVsdE1vZGVsRm9yQ2xpUmVxdWVzdBoqLmFpc2VydmVyLnYxLkdldERlZmF1bHRNb2RlbEZvckNsaVJlc3BvbnNlElwKD0F2YWlsYWJsZU1vZGVscxIjLmFpc2VydmVyLnYxLkF2YWlsYWJsZU1vZGVsc1JlcXVlc3QaJC5haXNlcnZlci52MS5BdmFpbGFibGVNb2RlbHNSZXNwb25zZWIGcHJvdG8z", [file_aiserver_v1_models]);
+  fileDesc("ChRhaXNlcnZlci92MS9haS5wcm90bxILYWlzZXJ2ZXIudjEiIQoSUnVuV2ViRmV0Y2hSZXF1ZXN0EgsKA3VybBgBIAEoCSIlChJSdW5XZWJGZXRjaFN1Y2Nlc3MSDwoHY29udGVudBgBIAEoCSI1ChBSdW5XZWJGZXRjaEVycm9yEg0KBWVycm9yGAEgASgJEhIKCmlzX3RpbWVvdXQYAiABKAgigwEKE1J1bldlYkZldGNoUmVzcG9uc2USMgoHc3VjY2VzcxgBIAEoCzIfLmFpc2VydmVyLnYxLlJ1bldlYkZldGNoU3VjY2Vzc0gAEi4KBWVycm9yGAIgASgLMh0uYWlzZXJ2ZXIudjEuUnVuV2ViRmV0Y2hFcnJvckgAQggKBnJlc3VsdCJmChNSdW5XZWJTZWFyY2hSZXF1ZXN0EhMKC3NlYXJjaF90ZXJtGAEgASgJEhgKC2V4cGxhbmF0aW9uGAIgASgJSACIAQESEAoIbW9kZWxfaWQYAyABKAlCDgoMX2V4cGxhbmF0aW9uIj0KEVdlYlNlYXJjaERvY3VtZW50EgsKA3VybBgBIAEoCRINCgV0aXRsZRgCIAEoCRIMCgR0ZXh0GAMgASgJImkKFFJ1bldlYlNlYXJjaFJlc3BvbnNlEhMKBmFuc3dlchgBIAEoCUgAiAEBEjEKCWRvY3VtZW50cxgCIAMoCzIeLmFpc2VydmVyLnYxLldlYlNlYXJjaERvY3VtZW50QgkKB19hbnN3ZXIy3gMKCUFpU2VydmljZRJcCg9HZXRVc2FibGVNb2RlbHMSIy5haXNlcnZlci52MS5HZXRVc2FibGVNb2RlbHNSZXF1ZXN0GiQuYWlzZXJ2ZXIudjEuR2V0VXNhYmxlTW9kZWxzUmVzcG9uc2USbgoVR2V0RGVmYXVsdE1vZGVsRm9yQ2xpEikuYWlzZXJ2ZXIudjEuR2V0RGVmYXVsdE1vZGVsRm9yQ2xpUmVxdWVzdBoqLmFpc2VydmVyLnYxLkdldERlZmF1bHRNb2RlbEZvckNsaVJlc3BvbnNlElwKD0F2YWlsYWJsZU1vZGVscxIjLmFpc2VydmVyLnYxLkF2YWlsYWJsZU1vZGVsc1JlcXVlc3QaJC5haXNlcnZlci52MS5BdmFpbGFibGVNb2RlbHNSZXNwb25zZRJQCgtSdW5XZWJGZXRjaBIfLmFpc2VydmVyLnYxLlJ1bldlYkZldGNoUmVxdWVzdBogLmFpc2VydmVyLnYxLlJ1bldlYkZldGNoUmVzcG9uc2USUwoMUnVuV2ViU2VhcmNoEiAuYWlzZXJ2ZXIudjEuUnVuV2ViU2VhcmNoUmVxdWVzdBohLmFpc2VydmVyLnYxLlJ1bldlYlNlYXJjaFJlc3BvbnNlYgZwcm90bzM", [file_aiserver_v1_models]);
+
+/**
+ * @generated from message aiserver.v1.RunWebFetchRequest
+ */
+export type RunWebFetchRequest = Message<"aiserver.v1.RunWebFetchRequest"> & {
+  /**
+   * @generated from field: string url = 1;
+   */
+  url: string;
+};
+
+/**
+ * Describes the message aiserver.v1.RunWebFetchRequest.
+ * Use `create(RunWebFetchRequestSchema)` to create a new message.
+ */
+export const RunWebFetchRequestSchema: GenMessage<RunWebFetchRequest> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_ai, 0);
+
+/**
+ * @generated from message aiserver.v1.RunWebFetchSuccess
+ */
+export type RunWebFetchSuccess = Message<"aiserver.v1.RunWebFetchSuccess"> & {
+  /**
+   * @generated from field: string content = 1;
+   */
+  content: string;
+};
+
+/**
+ * Describes the message aiserver.v1.RunWebFetchSuccess.
+ * Use `create(RunWebFetchSuccessSchema)` to create a new message.
+ */
+export const RunWebFetchSuccessSchema: GenMessage<RunWebFetchSuccess> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_ai, 1);
+
+/**
+ * @generated from message aiserver.v1.RunWebFetchError
+ */
+export type RunWebFetchError = Message<"aiserver.v1.RunWebFetchError"> & {
+  /**
+   * @generated from field: string error = 1;
+   */
+  error: string;
+
+  /**
+   * @generated from field: bool is_timeout = 2;
+   */
+  isTimeout: boolean;
+};
+
+/**
+ * Describes the message aiserver.v1.RunWebFetchError.
+ * Use `create(RunWebFetchErrorSchema)` to create a new message.
+ */
+export const RunWebFetchErrorSchema: GenMessage<RunWebFetchError> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_ai, 2);
+
+/**
+ * @generated from message aiserver.v1.RunWebFetchResponse
+ */
+export type RunWebFetchResponse = Message<"aiserver.v1.RunWebFetchResponse"> & {
+  /**
+   * @generated from oneof aiserver.v1.RunWebFetchResponse.result
+   */
+  result: {
+    /**
+     * @generated from field: aiserver.v1.RunWebFetchSuccess success = 1;
+     */
+    value: RunWebFetchSuccess;
+    case: "success";
+  } | {
+    /**
+     * @generated from field: aiserver.v1.RunWebFetchError error = 2;
+     */
+    value: RunWebFetchError;
+    case: "error";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message aiserver.v1.RunWebFetchResponse.
+ * Use `create(RunWebFetchResponseSchema)` to create a new message.
+ */
+export const RunWebFetchResponseSchema: GenMessage<RunWebFetchResponse> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_ai, 3);
+
+/**
+ * @generated from message aiserver.v1.RunWebSearchRequest
+ */
+export type RunWebSearchRequest = Message<"aiserver.v1.RunWebSearchRequest"> & {
+  /**
+   * @generated from field: string search_term = 1;
+   */
+  searchTerm: string;
+
+  /**
+   * @generated from field: optional string explanation = 2;
+   */
+  explanation?: string | undefined;
+
+  /**
+   * @generated from field: string model_id = 3;
+   */
+  modelId: string;
+};
+
+/**
+ * Describes the message aiserver.v1.RunWebSearchRequest.
+ * Use `create(RunWebSearchRequestSchema)` to create a new message.
+ */
+export const RunWebSearchRequestSchema: GenMessage<RunWebSearchRequest> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_ai, 4);
+
+/**
+ * @generated from message aiserver.v1.WebSearchDocument
+ */
+export type WebSearchDocument = Message<"aiserver.v1.WebSearchDocument"> & {
+  /**
+   * @generated from field: string url = 1;
+   */
+  url: string;
+
+  /**
+   * @generated from field: string title = 2;
+   */
+  title: string;
+
+  /**
+   * @generated from field: string text = 3;
+   */
+  text: string;
+};
+
+/**
+ * Describes the message aiserver.v1.WebSearchDocument.
+ * Use `create(WebSearchDocumentSchema)` to create a new message.
+ */
+export const WebSearchDocumentSchema: GenMessage<WebSearchDocument> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_ai, 5);
+
+/**
+ * @generated from message aiserver.v1.RunWebSearchResponse
+ */
+export type RunWebSearchResponse = Message<"aiserver.v1.RunWebSearchResponse"> & {
+  /**
+   * @generated from field: optional string answer = 1;
+   */
+  answer?: string | undefined;
+
+  /**
+   * @generated from field: repeated aiserver.v1.WebSearchDocument documents = 2;
+   */
+  documents: WebSearchDocument[];
+};
+
+/**
+ * Describes the message aiserver.v1.RunWebSearchResponse.
+ * Use `create(RunWebSearchResponseSchema)` to create a new message.
+ */
+export const RunWebSearchResponseSchema: GenMessage<RunWebSearchResponse> = /*@__PURE__*/
+  messageDesc(file_aiserver_v1_ai, 6);
 
 /**
  * @generated from service aiserver.v1.AiService
@@ -40,6 +202,22 @@ export const AiService: GenService<{
     methodKind: "unary";
     input: typeof AvailableModelsRequestSchema;
     output: typeof AvailableModelsResponseSchema;
+  },
+  /**
+   * @generated from rpc aiserver.v1.AiService.RunWebFetch
+   */
+  runWebFetch: {
+    methodKind: "unary";
+    input: typeof RunWebFetchRequestSchema;
+    output: typeof RunWebFetchResponseSchema;
+  },
+  /**
+   * @generated from rpc aiserver.v1.AiService.RunWebSearch
+   */
+  runWebSearch: {
+    methodKind: "unary";
+    input: typeof RunWebSearchRequestSchema;
+    output: typeof RunWebSearchResponseSchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_aiserver_v1_ai, 0);

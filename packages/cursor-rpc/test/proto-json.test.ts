@@ -1,7 +1,11 @@
 import { fromJson, toJson } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import { AgentClientMessageSchema, AgentServerMessageSchema, AgentService } from "../src/generated/agent/v1/agent_pb.ts";
-import { AiService } from "../src/generated/aiserver/v1/ai_pb.ts";
+import {
+  AiService,
+  RunWebFetchResponseSchema,
+  RunWebSearchResponseSchema,
+} from "../src/generated/aiserver/v1/ai_pb.ts";
 import { DashboardService } from "../src/generated/aiserver/v1/dashboard_pb.ts";
 import {
   GetServerConfigResponseSchema,
@@ -105,5 +109,65 @@ describe("proto JSON fixtures", () => {
     expect(AiService.typeName).toBe("aiserver.v1.AiService");
     expect(AgentService.typeName).toBe("agent.v1.AgentService");
     expect(AgentService.method.run.name).toBe("Run");
+    expect(AiService.method.runWebFetch.name).toBe("RunWebFetch");
+    expect(AiService.method.runWebFetch.methodKind).toBe("unary");
+    expect(AiService.method.runWebSearch.name).toBe("RunWebSearch");
+    expect(AiService.method.runWebSearch.methodKind).toBe("unary");
+  });
+
+  it("round-trips RunWebFetch success content and search documents with answer", () => {
+    const fetchSuccess = fromJson(RunWebFetchResponseSchema, {
+      success: { content: "# Hello" },
+    });
+    expect(fetchSuccess.result.case).toBe("success");
+    if (fetchSuccess.result.case !== "success") {
+      throw new Error("expected success");
+    }
+    expect(fetchSuccess.result.value.content).toBe("# Hello");
+    expect(toJson(RunWebFetchResponseSchema, fetchSuccess)).toEqual({
+      success: { content: "# Hello" },
+    });
+
+    const search = fromJson(RunWebSearchResponseSchema, {
+      answer: "summary",
+      documents: [{ url: "https://example.com", title: "Example", text: "chunk" }],
+    });
+    expect(search.answer).toBe("summary");
+    expect(search.documents).toHaveLength(1);
+    expect(search.documents[0]?.url).toBe("https://example.com");
+    expect(search.documents[0]?.title).toBe("Example");
+    expect(search.documents[0]?.text).toBe("chunk");
+    expect(toJson(RunWebSearchResponseSchema, search)).toEqual({
+      answer: "summary",
+      documents: [{ url: "https://example.com", title: "Example", text: "chunk" }],
+    });
+  });
+
+  it("ignores an unknown JSON field on RunWebFetchResponse", () => {
+    const message = fromJson(
+      RunWebFetchResponseSchema,
+      {
+        success: { content: "ok" },
+        unexpectedFutureField: { nested: true },
+      },
+      { ignoreUnknownFields: true },
+    );
+    expect(message.result.case).toBe("success");
+    expect(toJson(RunWebFetchResponseSchema, message)).not.toHaveProperty("unexpectedFutureField");
+  });
+
+  it("round-trips RunWebFetch error with is_timeout", () => {
+    const message = fromJson(RunWebFetchResponseSchema, {
+      error: { error: "timed out", isTimeout: true },
+    });
+    expect(message.result.case).toBe("error");
+    if (message.result.case !== "error") {
+      throw new Error("expected error");
+    }
+    expect(message.result.value.error).toBe("timed out");
+    expect(message.result.value.isTimeout).toBe(true);
+    expect(toJson(RunWebFetchResponseSchema, message)).toEqual({
+      error: { error: "timed out", isTimeout: true },
+    });
   });
 });

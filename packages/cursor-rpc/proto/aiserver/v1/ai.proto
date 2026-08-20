@@ -4,8 +4,47 @@ package aiserver.v1;
 
 import "aiserver/v1/models.proto";
 
+message RunWebFetchRequest {
+  string url = 1;
+}
+
+message RunWebFetchSuccess {
+  string content = 1;
+}
+
+message RunWebFetchError {
+  string error = 1;
+  bool is_timeout = 2;
+}
+
+message RunWebFetchResponse {
+  oneof result {
+    RunWebFetchSuccess success = 1;
+    RunWebFetchError error = 2;
+  }
+}
+
+message RunWebSearchRequest {
+  string search_term = 1;
+  optional string explanation = 2;
+  string model_id = 3;
+}
+
+message WebSearchDocument {
+  string url = 1;
+  string title = 2;
+  string text = 3;
+}
+
+message RunWebSearchResponse {
+  optional string answer = 1;
+  repeated WebSearchDocument documents = 2;
+}
+
 service AiService {
   rpc GetUsableModels(GetUsableModelsRequest) returns (GetUsableModelsResponse);
   rpc GetDefaultModelForCli(GetDefaultModelForCliRequest) returns (GetDefaultModelForCliResponse);
   rpc AvailableModels(AvailableModelsRequest) returns (AvailableModelsResponse);
+  rpc RunWebFetch(RunWebFetchRequest) returns (RunWebFetchResponse);
+  rpc RunWebSearch(RunWebSearchRequest) returns (RunWebSearchResponse);
 }
