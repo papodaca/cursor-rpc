@@ -15,7 +15,7 @@ deepened: 2026-08-19
 ## Goal Capsule
 
 - **Objective:** Ship a TypeScript Node.js library that authenticates to Cursor's ConnectRPC agent backend, lists models, and runs one conversation turn as a typed stream, so agent providers and application code can depend on it without executing local tools.
-- **Authority:** `rpc_spec.md` owns wire protocol, headers, auth, bootstrap, model merge, Run stream, and constants. `web_search.md` and `web_fetch.md` own those tools' approval and precheck shapes. This plan owns library surface, defaults, and packaging. Repo layout is owned by `docs/plans/2026-08-19-002-feat-npm-workspaces-scaffold-plan.md`. Where they disagree, the named spec owns protocol behavior; this plan owns SDK defaults; the workspaces plan owns repo layout.
+- **Authority:** `rpc_spec.md` owns wire protocol, headers, auth, bootstrap, model merge, Run stream, and constants. `web_search.md` and `web_fetch.md` own those tools' approval and precheck shapes. `docs/plans/2026-08-19-003-feat-pi-web-tools-plan.md` owns `RunWebFetch` / `RunWebSearch` and a permanent `createWebClient` sibling of `createClient`, not a wrap preview of this plan's client. This plan owns library surface, defaults, and packaging. Repo layout is owned by `docs/plans/2026-08-19-002-feat-npm-workspaces-scaffold-plan.md`. Where they disagree, the named spec owns protocol behavior; this plan owns SDK defaults; the workspaces plan owns repo layout; the web-tools plan owns those unaries and the web-client export.
 - **In scope:** Auth (API key, raw token, optional browser-login helper), Connect transport, bootstrap, model catalogue, HTTP/2 `agent.v1.AgentService/Run`, fail-closed exec/interaction/KV replies, portable `conversation_history`, AbortSignal, caller-injected credential store and handlers.
 - **Out of scope:** Local shell/file/MCP/computer-use execution, HTTP/1.1 `RunSSE`/`BidiAppend` shim, checkpoint/blob resume, repo indexing, analytics, cloning the official CLI, replacing `@cursor/sdk`.
 - **Stop if:** Live probes show the backend is neither Connect JSON nor Connect binary (for example classic gRPC-only). Stop if HTTP/2 bidi cannot be established and the only remaining path is the HTTP/1.1 shim (deferred). Do not invent a third protocol.
@@ -148,7 +148,6 @@ Cursor's agent backend is a ConnectRPC API. Official `@cursor/sdk` runs a local 
 - Checkpoint + KV blob store resume (`rpc_spec.md` §11.8–§13.2).
 - Local execution of shell, files, MCP, computer-use.
 - Typed convenience policy objects for web search/fetch beyond the generic dispatcher (generic path ships now).
-- Direct `RunWebSearch` / `RunWebFetch` unary RPCs.
 - File and macOS keychain credential adapters.
 - Dual CJS publish.
 - `NameAgent` and other non-Run AgentService methods.
