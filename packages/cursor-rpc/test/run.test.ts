@@ -331,6 +331,12 @@ describe("run turn", () => {
     expect(action.value.requestContext?.env?.workspacePaths).toEqual([]);
     expect(action.value.requestContext?.fileContents).toEqual({});
     expect(opening.message.value.excludeWorkspaceContext).toBe(true);
+    const withModel = openingRunRequest("hello", undefined, { modelId: "composer-2.5" });
+    expect(withModel.message.case).toBe("runRequest");
+    if (withModel.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(withModel.message.value.requestedModel?.modelId).toBe("composer-2.5");
   });
 
   it("second turn history omits conversationState blobs", async () => {

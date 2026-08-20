@@ -24,6 +24,7 @@ export class ClientEpoch {
           apiKey: secret.apiKey,
           authToken: secret.authToken,
           store: new MemoryCredentialStore(),
+          env: pluginRuntimeEnv(),
         }));
   }
 
@@ -66,6 +67,16 @@ export function clientForStream(epoch: ClientEpoch, options?: SimpleStreamOption
     return undefined;
   }
   return epoch.clientFor(secret);
+}
+
+export function pluginRuntimeEnv(
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string | undefined> {
+  return {
+    CURSOR_API_ENDPOINT: env.CURSOR_API_ENDPOINT,
+    CURSOR_API_BASE_URL: env.CURSOR_API_BASE_URL,
+    CURSOR_WEBSITE_URL: env.CURSOR_WEBSITE_URL,
+  };
 }
 
 export function dropAfterAuthError(epoch: ClientEpoch, error: unknown): void {

@@ -284,6 +284,7 @@ describe("streamSimple mapping", () => {
     );
     await waitForStream(stream);
     expect(runs[0]?.options.maxTokens).toBe(128);
+    expect(runs[0]?.options.modelId).toBe(TEST_MODEL.id);
   });
 
   it("adapter events do not contain scripted tool-arg payloads in error text", async () => {

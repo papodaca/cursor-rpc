@@ -62,6 +62,7 @@ export type ClientRunOptions = {
   mcpTools?: McpToolDto[];
   customSystemPrompt?: string;
   maxTokens?: number;
+  modelId?: string;
   signal?: AbortSignal;
   handlers?: DispatchHandlers;
   allowWebSearch?: boolean;
@@ -176,6 +177,7 @@ class CursorRpcClientImpl implements CursorRpcClient {
         mcpTools: options.mcpTools,
         customSystemPrompt: options.customSystemPrompt,
         maxTokens: options.maxTokens,
+        modelId: options.modelId,
         inbound,
         send: (message) => {
           outbound.push(message);

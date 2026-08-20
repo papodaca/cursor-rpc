@@ -13,6 +13,7 @@ import {
   ConversationStateStructureSchema,
   ConversationTokenDetailsSchema,
   CancelActionSchema,
+  RequestedModelSchema,
   McpToolDefinitionSchema,
   McpToolsSchema,
   RequestContextEnvSchema,
@@ -47,6 +48,7 @@ export type RunRequestOptions = {
   mcpTools?: McpToolDto[];
   customSystemPrompt?: string;
   maxTokens?: number;
+  modelId?: string;
 };
 
 export type RunOptions = {
@@ -118,6 +120,10 @@ export function openingRunRequest(
         conversationId: extras.conversationId ?? randomUUID(),
         runId: extras.runId,
         customSystemPrompt: extras.customSystemPrompt,
+        requestedModel:
+          extras.modelId !== undefined && extras.modelId.length > 0
+            ? create(RequestedModelSchema, { modelId: extras.modelId })
+            : undefined,
         excludeWorkspaceContext: true,
         mcpTools:
           mcpTools.length > 0
@@ -193,7 +199,30 @@ export function runTurn(options: RunOptions): RunHandle {
       : CancelledError.fromAbort(abort.signal.reason);
   };
 
-  const onCallerAbort = () => abort.abort(options.signal?.reason);
+  let cancelSent = false;
+  const requestCancel = (): void => {
+    if (cancelSent) {
+      return;
+    }
+    cancelSent = true;
+    void options.send(
+      create(AgentClientMessageSchema, {
+        message: {
+          case: "conversationAction",
+          value: create(ConversationActionSchema, {
+            action: {
+              case: "cancelAction",
+              value: create(CancelActionSchema, { reason: "aborted" }),
+            },
+          }),
+        },
+      }),
+    );
+  };
+  const onCallerAbort = () => {
+    requestCancel();
+    abort.abort(options.signal?.reason);
+  };
   options.signal?.addEventListener("abort", onCallerAbort, { once: true });
 
   const loop = (async () => {
@@ -206,6 +235,7 @@ export function runTurn(options: RunOptions): RunHandle {
           mcpTools: options.mcpTools,
           customSystemPrompt: options.customSystemPrompt,
           maxTokens: options.maxTokens,
+          modelId: options.modelId,
         }),
       );
       events.push({ type: "connection", state: "connected" });
@@ -340,19 +370,7 @@ export function runTurn(options: RunOptions): RunHandle {
     },
     wait: () => loop,
     abort: () => {
-      void options.send(
-        create(AgentClientMessageSchema, {
-          message: {
-            case: "conversationAction",
-            value: create(ConversationActionSchema, {
-              action: {
-                case: "cancelAction",
-                value: create(CancelActionSchema, { reason: "aborted" }),
-              },
-            }),
-          },
-        }),
-      );
+      requestCancel();
       abort.abort();
     },
     conversationHistory: () => buildConversationHistory(options.prompt, collected),

@@ -49,6 +49,7 @@ export function streamCursor(
       const runId = randomUUID();
       const mcpCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
       let mcpSeen = false;
+      let cancelled = false;
       const handle = await client.run({
         prompt: latestUserText(context),
         customSystemPrompt: context.systemPrompt,
@@ -56,6 +57,7 @@ export function streamCursor(
         conversationId,
         runId,
         maxTokens: options?.maxTokens,
+        modelId: model.id,
         mode: tools.length > 0 ? "agent" : "ask",
         mcpTools:
           tools.length > 0
@@ -84,24 +86,34 @@ export function streamCursor(
             return;
           }
           applyRunEvent(event, output, stream, advertised, mcpCalls);
+          if (mcpSeen && !cancelled) {
+            cancelled = true;
+            handle.abort();
+          }
         }
       } catch (error) {
         if (mcpCalls.length > 0 && !options?.signal?.aborted) {
           finishToolUse(stream, output, mcpCalls);
-          handle.abort();
+          if (!cancelled) {
+            handle.abort();
+          }
           return;
         }
-        handle.abort();
+        if (!cancelled) {
+          handle.abort();
+        }
         dropAfterAuthError(epoch, error);
         fail(stream, output, options, error);
         return;
       }
       if (mcpCalls.length > 0) {
         finishToolUse(stream, output, mcpCalls);
-        handle.abort();
+        if (!cancelled) {
+          handle.abort();
+        }
         return;
       }
-      if (mcpSeen) {
+      if (mcpSeen && !cancelled) {
         handle.abort();
       }
       if (output.stopReason === "pending") {

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthenticationError } from "cursor-rpc";
-import { ClientEpoch, cursorAuth, dropAfterAuthError, resolveClientSecret } from "../src/auth.ts";
+import { ClientEpoch, cursorAuth, dropAfterAuthError, pluginRuntimeEnv, resolveClientSecret } from "../src/auth.ts";
 import { streamCursor } from "../src/stream.ts";
 import { asTestStream, fakeEpoch, isolatedHome, TEST_MODEL, waitForStream } from "./helpers.ts";
 
@@ -38,15 +38,27 @@ describe("auth adapter", () => {
     const loginFn = vi.fn(() => {
       throw new Error("login must not run");
     });
-    const auth = cursorAuth({ login: loginFn as never });
     const { epoch } = fakeEpoch({ events: [{ type: "text_delta", text: "ok" }, { type: "turn_ended", usage: {} }] });
     const stream = asTestStream(
-      streamCursor(epoch, TEST_MODEL, { messages: [{ role: "user", content: "hi" }] }, { apiKey: "key_live_test" }),
+      streamCursor(epoch, TEST_MODEL, { messages: [{ role: "user", content: "hi" }] }),
     );
     await waitForStream(stream);
     expect(loginFn).not.toHaveBeenCalled();
     expect(stream.events.some((event) => event.type === "done")).toBe(true);
-    await expect(auth.apiKey.resolve({})).resolves.toMatchObject({ source: "CURSOR_API_KEY" });
+    await expect(cursorAuth({ login: loginFn as never }).apiKey.resolve({})).resolves.toMatchObject({
+      source: "CURSOR_API_KEY",
+    });
+  });
+
+  it("plugin runtime env omits CURSOR_AUTH_TOKEN and CURSOR_API_KEY", () => {
+    const env = pluginRuntimeEnv({
+      CURSOR_AUTH_TOKEN: "cli-jwt",
+      CURSOR_API_KEY: "key_live_test",
+      CURSOR_API_ENDPOINT: "https://example.invalid",
+    });
+    expect(env.CURSOR_AUTH_TOKEN).toBeUndefined();
+    expect(env.CURSOR_API_KEY).toBeUndefined();
+    expect(env.CURSOR_API_ENDPOINT).toBe("https://example.invalid");
   });
 
   it("/login helper returns an authorization URL without poll verifier and stores access JWT", async () => {

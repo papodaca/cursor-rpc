@@ -1,4 +1,4 @@
-import { ClientEpoch, clientForStream, cursorAuth, isOauthCredential } from "./auth.js";
+import { ClientEpoch, clientForStream, cursorAuth, dropAfterAuthError, isOauthCredential } from "./auth.js";
 import { fetchCursorModels } from "./models.js";
 import { streamCursor } from "./stream.js";
 import { cursorApiStreams } from "./stream-stub.js";
@@ -29,8 +29,16 @@ export function cursorProviderInput(options: {
           return [];
         }
         try {
-          return await fetchCursorModels((signal) => client.models(signal), context.signal);
-        } catch {
+          return await fetchCursorModels(async (signal) => {
+            try {
+              return await client.models(signal);
+            } catch (error) {
+              dropAfterAuthError(activeEpoch, error);
+              throw error;
+            }
+          }, context.signal);
+        } catch (error) {
+          dropAfterAuthError(activeEpoch, error);
           return [];
         }
       }),
