@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { AuthenticationError } from "../errors.js";
+import { AuthenticationError, CursorRpcError } from "../errors.js";
 import type { CredentialStore, StoredCredentials } from "../credentials.js";
 import { exchangeApiKey, type FetchLike } from "./api-key.js";
 import { isExpiringSoon } from "./token.js";
@@ -90,6 +90,9 @@ export class AuthSession {
 export function isAuthFailure(error: unknown, bearerWasSent: boolean): boolean {
   if (error instanceof ConnectError) {
     return error.code === Code.Unauthenticated;
+  }
+  if (error instanceof CursorRpcError && error.code === "unauthenticated") {
+    return true;
   }
   if (!bearerWasSent) {
     return false;
