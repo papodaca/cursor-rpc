@@ -25,6 +25,7 @@ export type { RunEvent, RunResult, UsageCounts } from "./run/events.js";
 export type { RunHandle } from "./run/run.js";
 export type { McpToolDto, RunMode, RunRequestOptions } from "./run/run.js";
 export { replyMcpResult, type DispatchHandlers } from "./run/dispatch.js";
+export { conversationHistoryFromTurns, type HistoryTurn } from "./run/history.js";
 export type { ModelCatalogue } from "./session/models.js";
 export type { ConversationHistory, AgentClientMessage, InteractionQuery, ExecServerMessage } from "./generated/agent/v1/agent_pb.js";
 export type { AvailableModel, ModelDetails } from "./generated/aiserver/v1/models_pb.js";

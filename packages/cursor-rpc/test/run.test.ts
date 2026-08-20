@@ -270,16 +270,27 @@ describe("run turn", () => {
 
   it("abort during stream tears down and rejects wait", async () => {
     const inbound = new AsyncQueue<AgentServerMessage>();
+    const outbound: AgentClientMessage[] = [];
     const handle = runTurn({
       prompt: "hi",
       inbound,
-      send: () => undefined,
+      send: (message) => {
+        outbound.push(message);
+      },
       heartbeatMs: 60_000,
       stallMs: 60_000,
     });
     handle.abort();
     inbound.close();
     await expect(handle.wait()).rejects.toBeInstanceOf(CancelledError);
+    expect(
+      outbound.some((message) => {
+        if (message.message.case !== "conversationAction") {
+          return false;
+        }
+        return message.message.value.action.case === "cancelAction";
+      }),
+    ).toBe(true);
   });
 
   it("mid-stream Unauthenticated clears the store, rejects wait, and does not start another Run", async () => {

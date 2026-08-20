@@ -12,6 +12,7 @@ import {
   ConversationActionSchema,
   ConversationStateStructureSchema,
   ConversationTokenDetailsSchema,
+  CancelActionSchema,
   McpToolDefinitionSchema,
   McpToolsSchema,
   RequestContextEnvSchema,
@@ -338,7 +339,22 @@ export function runTurn(options: RunOptions): RunHandle {
       }
     },
     wait: () => loop,
-    abort: () => abort.abort(),
+    abort: () => {
+      void options.send(
+        create(AgentClientMessageSchema, {
+          message: {
+            case: "conversationAction",
+            value: create(ConversationActionSchema, {
+              action: {
+                case: "cancelAction",
+                value: create(CancelActionSchema, { reason: "aborted" }),
+              },
+            }),
+          },
+        }),
+      );
+      abort.abort();
+    },
     conversationHistory: () => buildConversationHistory(options.prompt, collected),
   };
 }
