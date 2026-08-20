@@ -109,6 +109,7 @@ function redactSecrets(value: string): string {
     .replace(/Bearer\s+\S+/gi, "[redacted]")
     .replace(/(authorization:\s*)(\S+)/gi, "$1[redacted]")
     .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|verifier)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+    .replace(/\bkey_[A-Za-z0-9_-]+\b/g, "[redacted]")
     .replace(/https?:\/\/[^/@\s]+:[^/@\s]+@/gi, (match) => match.replace(/\/\/[^@]+@/, "//[redacted]@"));
 }
 
