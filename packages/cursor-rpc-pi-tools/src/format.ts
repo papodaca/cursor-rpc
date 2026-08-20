@@ -1,0 +1,80 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+export type TruncateResult = {
+  content: string;
+  truncated: boolean;
+  outputLines: number;
+  totalLines: number;
+  outputBytes: number;
+  totalBytes: number;
+};
+
+export type TruncateFn = (content: string, options?: { maxLines?: number; maxBytes?: number }) => TruncateResult;
+
+export type SearchDocument = {
+  url: string;
+  title: string;
+  text: string;
+};
+
+export function buildYearGuidance(isoDate: string): string {
+  if (isoDate.length !== 10 || isoDate[4] !== "-" || isoDate[7] !== "-") {
+    throw new Error("year guidance date must be YYYY-MM-DD");
+  }
+  const year = isoDate.slice(0, 4);
+  const prior = /^\d+$/.test(year) ? String(Number(year) - 1) : year;
+  return [
+    `Today's date is ${isoDate}.`,
+    `When using web_search for recent information, documentation, or current events, use ${year} rather than ${prior}.`,
+    `For example, search "Node.js ${year} release notes", not "Node.js ${prior} release notes".`,
+  ].join(" ");
+}
+
+export function utcDateString(now: Date): string {
+  return now.toISOString().slice(0, 10);
+}
+
+export function formatSearchDocuments(documents: SearchDocument[]): string {
+  return JSON.stringify(
+    documents.map((document) => ({
+      title: document.title,
+      url: document.url,
+      chunk: document.text,
+    })),
+  );
+}
+
+export function redactToolText(value: string): string {
+  return value
+    .replace(/Bearer\s+\S+/gi, "[redacted]")
+    .replace(/(authorization:\s*)(\S+)/gi, "$1[redacted]")
+    .replace(/\b(api[_-]?key|access[_-]?token|refresh[_-]?token|verifier)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+    .replace(/\bkey_[A-Za-z0-9_-]+\b/g, "[redacted]")
+    .replace(/https?:\/\/[^/@\s]+:[^/@\s]+@/gi, (match) => match.replace(/\/\/[^@]+@/, "//[redacted]@"));
+}
+
+export async function applyTruncation(
+  text: string,
+  deps: {
+    truncate: TruncateFn;
+    formatSize: (bytes: number) => string;
+    maxBytes: number;
+    maxLines: number;
+  },
+): Promise<string> {
+  const truncation = deps.truncate(text, { maxBytes: deps.maxBytes, maxLines: deps.maxLines });
+  if (!truncation.truncated) {
+    return truncation.content;
+  }
+  const path = await writeSpill(text);
+  return `${truncation.content}\n\n[Output truncated: ${truncation.outputLines} of ${truncation.totalLines} lines (${deps.formatSize(truncation.outputBytes)} of ${deps.formatSize(truncation.totalBytes)}). Full output saved to: ${path}]`;
+}
+
+async function writeSpill(text: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "cursor-rpc-pi-tools-"));
+  const path = join(dir, "output.txt");
+  await writeFile(path, text, { encoding: "utf8", mode: 0o600 });
+  return path;
+}
