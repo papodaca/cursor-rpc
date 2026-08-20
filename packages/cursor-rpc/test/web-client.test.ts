@@ -218,6 +218,80 @@ describe("createWebClient", () => {
     expect(methods).toEqual(["GetDefaultModelForCli", "GetUsableModels"]);
   });
 
+  it("retries catalogue after a failed first resolve", async () => {
+    let defaults = 0;
+    let usables = 0;
+    const client = createWebClientWithTransport(
+      fakeUnaryTransport(async (method) => {
+        if (method.name === "GetDefaultModelForCli") {
+          defaults += 1;
+          if (defaults === 1) {
+            throw new ConnectError("catalogue down", Code.Internal);
+          }
+          return unaryResponse(method, create(GetDefaultModelForCliResponseSchema, { model: MODEL }));
+        }
+        if (method.name === "GetUsableModels") {
+          usables += 1;
+          throw new ConnectError("catalogue down", Code.Internal);
+        }
+        expect(method.name).toBe("RunWebSearch");
+        return unaryResponse(method, create(RunWebSearchResponseSchema, { documents: [] }));
+      }),
+      { authToken: "tok" },
+    );
+    await expect(client.search("term")).rejects.toMatchObject({ code: "internal" });
+    await expect(client.search("term")).resolves.toMatchObject({ ok: true });
+    expect(defaults).toBe(2);
+    expect(usables).toBe(1);
+  });
+
+  it("falls back to usable models when GetDefaultModelForCli throws internal", async () => {
+    const methods: string[] = [];
+    const client = createWebClientWithTransport(
+      fakeUnaryTransport(async (method, _signal, _timeout, _headers, input) => {
+        methods.push(method.name);
+        if (method.name === "GetDefaultModelForCli") {
+          throw new ConnectError("boom", Code.Internal);
+        }
+        if (method.name === "GetUsableModels") {
+          return unaryResponse(method, create(GetUsableModelsResponseSchema, { models: [MODEL] }));
+        }
+        expect(method.name).toBe("RunWebSearch");
+        expect((input as { modelId?: string }).modelId).toBe("composer-2.5");
+        return unaryResponse(method, create(RunWebSearchResponseSchema, { documents: [] }));
+      }),
+      { authToken: "tok" },
+    );
+    await expect(client.search("term")).resolves.toMatchObject({ ok: true });
+    expect(methods).toEqual(["GetDefaultModelForCli", "GetUsableModels", "RunWebSearch"]);
+  });
+
+  it("uses first usable model when default id is whitespace", async () => {
+    const methods: string[] = [];
+    const client = createWebClientWithTransport(
+      fakeUnaryTransport(async (method, _signal, _timeout, _headers, input) => {
+        methods.push(method.name);
+        if (method.name === "GetDefaultModelForCli") {
+          return unaryResponse(
+            method,
+            create(GetDefaultModelForCliResponseSchema, {
+              model: create(ModelDetailsSchema, { modelId: "   ", displayName: "Blank" }),
+            }),
+          );
+        }
+        if (method.name === "GetUsableModels") {
+          return unaryResponse(method, create(GetUsableModelsResponseSchema, { models: [MODEL] }));
+        }
+        expect(method.name).toBe("RunWebSearch");
+        expect((input as { modelId?: string }).modelId).toBe("composer-2.5");
+        return unaryResponse(method, create(RunWebSearchResponseSchema, { documents: [] }));
+      }),
+      { authToken: "tok" },
+    );
+    await expect(client.search("term")).resolves.toMatchObject({ ok: true });
+    expect(methods).toEqual(["GetDefaultModelForCli", "GetUsableModels", "RunWebSearch"]);
+  });
+
   it("does not call model rpcs for fetch", async () => {
     const methods: string[] = [];
     const client = createWebClientWithTransport(
@@ -272,6 +346,72 @@ describe("createWebClient", () => {
     await expect(searchPromise).resolves.toMatchObject({ ok: true, documents: [] });
     expect(searchStarted).toBe(true);
     await expect(client.fetch("https://example.com/other")).resolves.toMatchObject({ ok: true });
+  });
+
+  it("aborting one search during GetDefaultModelForCli does not fail the sibling", async () => {
+    const abort = new AbortController();
+    const gate = Promise.withResolvers<void>();
+    let defaults = 0;
+    const client = createWebClientWithTransport(
+      fakeUnaryTransport(async (method) => {
+        if (method.name === "GetDefaultModelForCli") {
+          defaults += 1;
+          abort.abort();
+          await gate.promise;
+          return unaryResponse(method, create(GetDefaultModelForCliResponseSchema, { model: MODEL }));
+        }
+        expect(method.name).toBe("RunWebSearch");
+        return unaryResponse(method, create(RunWebSearchResponseSchema, { documents: [] }));
+      }),
+      { authToken: "tok" },
+    );
+    const first = client.search("a", { signal: abort.signal });
+    const second = client.search("b");
+    await expect(first).rejects.toBeInstanceOf(CancelledError);
+    gate.resolve();
+    await expect(second).resolves.toMatchObject({ ok: true, documents: [] });
+    expect(defaults).toBe(1);
+  });
+
+  it("aborting one waiter during token exchange does not cancel the sibling", async () => {
+    const abort = new AbortController();
+    const gate = Promise.withResolvers<void>();
+    let exchanges = 0;
+    const client = createWebClientWithTransport(
+      fakeUnaryTransport(async (method) => {
+        if (method.name === "GetDefaultModelForCli") {
+          return unaryResponse(method, create(GetDefaultModelForCliResponseSchema, { model: MODEL }));
+        }
+        if (method.name === "RunWebFetch") {
+          return unaryResponse(
+            method,
+            create(RunWebFetchResponseSchema, {
+              result: { case: "success", value: { content: "page" } },
+            }),
+          );
+        }
+        return unaryResponse(method, create(RunWebSearchResponseSchema, { documents: [] }));
+      }),
+      {
+        apiKey: "key_live_secret",
+        store: new MemoryCredentialStore(),
+        fetch: async () => {
+          exchanges += 1;
+          abort.abort();
+          await gate.promise;
+          return jsonResponse(200, {
+            accessToken: jwt(Math.floor(Date.now() / 1000) + 3600),
+            refreshToken: "refresh",
+          });
+        },
+      },
+    );
+    const fetchPromise = client.fetch("https://example.com", { signal: abort.signal });
+    const searchPromise = client.search("term");
+    await expect(fetchPromise).rejects.toBeInstanceOf(CancelledError);
+    gate.resolve();
+    await expect(searchPromise).resolves.toMatchObject({ ok: true });
+    expect(exchanges).toBe(1);
   });
 
   it("throws AuthenticationError before network when credentials are missing", async () => {

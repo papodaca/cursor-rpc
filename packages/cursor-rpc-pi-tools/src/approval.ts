@@ -2,13 +2,19 @@ export const CONFIRM_DISPLAY_MAX = 240;
 
 const ANSI = /\x1B\[[0-9;]*[A-Za-z]/g;
 const C0_C1 = /[\u0000-\u001F\u007F-\u009F]/g;
+const BIDI_FORMAT = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g;
 
 export function sanitizeConfirmLine(value: string, max = CONFIRM_DISPLAY_MAX): string {
-  const single = value.replace(ANSI, "").replace(C0_C1, " ").replace(/\s+/g, " ").trim();
+  const single = value
+    .replace(ANSI, "")
+    .replace(BIDI_FORMAT, "")
+    .replace(C0_C1, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (single.length <= max) {
     return single;
   }
-  return single.slice(0, max);
+  return `${single.slice(0, Math.max(0, max - 1))}…`;
 }
 
 export type ApprovalDeps = {

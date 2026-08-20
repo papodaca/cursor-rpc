@@ -1,5 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { describe, expect, it, vi } from "vitest";
 import { applyTruncation, buildYearGuidance, formatSearchDocuments, redactToolText } from "../src/format.ts";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    writeFile: vi.fn(actual.writeFile),
+  };
+});
 
 describe("format", () => {
   it("builds year guidance with a 2026 vs 2025 example", () => {
@@ -59,5 +68,23 @@ describe("format", () => {
     const spilled = await readFile(path, "utf8");
     expect(spilled).toBe("hello");
     expect(spilled).not.toMatch(/CURSOR_/);
+  });
+
+  it("keeps truncated text when spill write fails", async () => {
+    vi.mocked(writeFile).mockRejectedValueOnce(new Error("disk full"));
+    const text = await applyTruncation("hello", {
+      truncate: () => ({
+        content: "head",
+        truncated: true,
+        outputLines: 1,
+        totalLines: 10,
+        outputBytes: 4,
+        totalBytes: 60_000,
+      }),
+      formatSize: (bytes) => `${bytes}B`,
+      maxBytes: 50_000,
+      maxLines: 2000,
+    });
+    expect(text).toBe("head\n\n[Output truncated: 1 of 10 lines (4B of 60000B). spill failed: disk full]");
   });
 });

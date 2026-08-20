@@ -151,9 +151,12 @@ class WebClientImpl implements WebClient {
   async #modelId(signal?: AbortSignal): Promise<string> {
     this.#throwIfClosed(signal);
     if (this.#modelFlight === undefined) {
-      await this.#refreshBearer();
+      await this.#refreshBearer(signal);
       this.#throwIfClosed(signal);
-      this.#modelFlight ??= this.#resolveModelId();
+      this.#modelFlight ??= this.#resolveModelId().catch((error) => {
+        this.#modelFlight = undefined;
+        throw error;
+      });
     }
     try {
       const modelId = await raceWithAbort(this.#modelFlight, signal);
@@ -180,7 +183,9 @@ class WebClientImpl implements WebClient {
     } catch (error) {
       const mapped = mapTransportError(error);
       this.#recordAuthFailure(mapped);
-      throw mapped;
+      if (mapped instanceof AuthenticationError || mapped instanceof CancelledError) {
+        throw mapped;
+      }
     }
     try {
       const usable = await unaryCall(this.#transport, AiService.method.getUsableModels, {}, {
@@ -207,7 +212,7 @@ class WebClientImpl implements WebClient {
     const signal = combineSignals(callSignal, this.#options.signal);
     this.#throwIfClosed(signal);
     try {
-      await this.#refreshBearer();
+      await this.#refreshBearer(callSignal);
       this.#throwIfClosed(signal);
       return await unaryCall(this.#transport, method, input, { signal });
     } catch (error) {
@@ -217,12 +222,12 @@ class WebClientImpl implements WebClient {
     }
   }
 
-  async #refreshBearer(): Promise<void> {
+  async #refreshBearer(callSignal?: AbortSignal): Promise<void> {
     if (this.#auth.pinned) {
       throw new AuthenticationError("invalid token, please log in again");
     }
     this.#tokenFlight ??= this.#auth
-      .accessToken()
+      .accessToken(this.#options.signal)
       .then((token) => {
         this.#bearer = token;
         return token;
@@ -230,7 +235,7 @@ class WebClientImpl implements WebClient {
       .finally(() => {
         this.#tokenFlight = undefined;
       });
-    await this.#tokenFlight;
+    await raceWithAbort(this.#tokenFlight, callSignal);
   }
 
   #recordAuthFailure(error: unknown): void {

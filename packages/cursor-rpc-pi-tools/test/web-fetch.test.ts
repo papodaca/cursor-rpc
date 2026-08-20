@@ -78,6 +78,19 @@ describe("web_fetch", () => {
     expect(d.fetch).not.toHaveBeenCalled();
   });
 
+  it("returns Cancelled after confirm when aborted and does not call the client", async () => {
+    const controller = new AbortController();
+    const d = deps({
+      confirm: async () => {
+        controller.abort();
+        return true;
+      },
+    });
+    const result = await executeWebFetch({ url: "https://example.com" }, controller.signal, d);
+    expect(result.content[0]?.text).toBe("Cancelled");
+    expect(d.fetch).not.toHaveBeenCalled();
+  });
+
   it("returns Cancelled text when the client throws CancelledError", async () => {
     const d = deps();
     d.fetch.mockRejectedValueOnce(new CancelledError());
@@ -122,6 +135,16 @@ describe("web_fetch", () => {
     const result = await executeWebFetch({ url: "https://example.com" }, undefined, d);
     expect(result.content[0]?.text).not.toMatch(/secret-token/);
     expect(result.content[0]?.text).not.toMatch(/user:pass/);
+  });
+
+  it("throws when the client reports a timeout", async () => {
+    const d = deps();
+    d.fetch.mockResolvedValueOnce({
+      ok: false,
+      error: "fetch timed out",
+      isTimeout: true,
+    });
+    await expect(executeWebFetch({ url: "https://example.com" }, undefined, d)).rejects.toThrow("fetch timed out");
   });
 
   it("throws before confirm when url is empty", async () => {

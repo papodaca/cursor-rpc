@@ -76,8 +76,14 @@ export async function applyTruncation(text: string, deps: TruncationDeps): Promi
   if (!truncation.truncated) {
     return truncation.content;
   }
-  const path = await writeSpill(text);
-  return `${truncation.content}\n\n[Output truncated: ${truncation.outputLines} of ${truncation.totalLines} lines (${deps.formatSize(truncation.outputBytes)} of ${deps.formatSize(truncation.totalBytes)}). Full output saved to: ${path}]`;
+  const counts = `${truncation.outputLines} of ${truncation.totalLines} lines (${deps.formatSize(truncation.outputBytes)} of ${deps.formatSize(truncation.totalBytes)})`;
+  try {
+    const path = await writeSpill(text);
+    return `${truncation.content}\n\n[Output truncated: ${counts}. Full output saved to: ${path}]`;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `${truncation.content}\n\n[Output truncated: ${counts}. spill failed: ${message}]`;
+  }
 }
 
 async function writeSpill(text: string): Promise<string> {
