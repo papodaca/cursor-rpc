@@ -62,6 +62,60 @@ export class HttpError extends Error {
   }
 }
 
+export type MappedCursorError = { kind: "cancelled" } | { kind: "http"; error: HttpError; pin: boolean };
+
+export function mapCursorError(error: unknown): MappedCursorError {
+  if (error instanceof HttpError) {
+    return { kind: "http", error, pin: false };
+  }
+  if (isNamedError(error, "CancelledError")) {
+    return { kind: "cancelled" };
+  }
+  if (isNamedError(error, "AuthenticationError") || isNamedError(error, "PolicyError")) {
+    return {
+      kind: "http",
+      pin: true,
+      error: new HttpError(
+        502,
+        openaiError({
+          message: "Cursor upstream request failed; this is not caused by the inbound Bearer token",
+          type: "api_error",
+          param: null,
+          code: "cursor_upstream",
+        }),
+      ),
+    };
+  }
+  if (isNamedError(error, "TransportUnsupportedError") || (isNamedError(error, "StreamError") && isRetryable(error))) {
+    return {
+      kind: "http",
+      pin: false,
+      error: new HttpError(
+        503,
+        openaiError({
+          message: "Cursor upstream temporarily unavailable",
+          type: "api_error",
+          param: null,
+          code: "cursor_unavailable",
+        }),
+      ),
+    };
+  }
+  return {
+    kind: "http",
+    pin: false,
+    error: new HttpError(500, internalError),
+  };
+}
+
+function isNamedError(error: unknown, name: string): error is Error {
+  return error instanceof Error && error.name === name;
+}
+
+function isRetryable(error: Error): boolean {
+  return "isRetryable" in error && error.isRetryable === true;
+}
+
 export function writeJson(res: ServerResponse, status: number, body: unknown, requestId: string): void {
   if (res.writableEnded) {
     return;

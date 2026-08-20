@@ -10,7 +10,8 @@ import {
   notFoundError,
   writeJson,
 } from "./errors.js";
-import { listModelsResponse, modelNotFoundError, resolveCreateModel, toOpenAIModel } from "./openai/models.js";
+import { handleChatCompletion, runPinned, type UpstreamPin } from "./openai/completions.js";
+import { listModelsResponse, modelNotFoundError, toOpenAIModel } from "./openai/models.js";
 import { emptyProvider, type ServerProvider } from "./provider.js";
 
 export type StartedServer = {
@@ -33,8 +34,9 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   const config = options.config ?? loadConfig(options);
   assertListenReady(config);
   const provider = options.provider ?? emptyProvider();
+  const pin: UpstreamPin = {};
   const server = createServer((req, res) => {
-    void dispatch(req, res, config, provider, options.handler);
+    void dispatch(req, res, config, provider, pin, options.handler);
   });
   server.requestTimeout = 0;
   server.headersTimeout = 0;
@@ -63,6 +65,7 @@ async function dispatch(
   res: ServerResponse,
   config: ServerConfig,
   provider: ServerProvider,
+  pin: UpstreamPin,
   handler: RequestHandler | undefined,
 ): Promise<void> {
   const requestId = randomUUID();
@@ -76,7 +79,7 @@ async function dispatch(
       await handler(req, res, requestId);
       return;
     }
-    await route(req, res, provider, requestId);
+    await route(req, res, provider, pin, requestId);
   } catch (error) {
     if (error instanceof HttpError) {
       writeJson(res, error.status, error.body, requestId);
@@ -90,17 +93,22 @@ async function route(
   req: IncomingMessage,
   res: ServerResponse,
   provider: ServerProvider,
+  pin: UpstreamPin,
   requestId: string,
 ): Promise<void> {
+  if (pin.error !== undefined) {
+    writeJson(res, pin.error.status, pin.error.body, requestId);
+    return;
+  }
   const path = pathname(req);
   if (req.method === "GET" && path === "/v1/models") {
-    const catalogue = await provider.models();
+    const catalogue = await runPinned(pin, () => provider.models());
     writeJson(res, 200, listModelsResponse(catalogue), requestId);
     return;
   }
   if (req.method === "GET" && path.startsWith("/v1/models/")) {
     const id = decodeURIComponent(path.slice("/v1/models/".length));
-    const catalogue = await provider.models();
+    const catalogue = await runPinned(pin, () => provider.models());
     const canonical = id.trim() === "" ? undefined : catalogue.resolve(id);
     if (canonical === undefined) {
       writeJson(res, 404, modelNotFoundError(id), requestId);
@@ -111,13 +119,17 @@ async function route(
   }
   if (req.method === "POST" && path === "/v1/chat/completions") {
     const body = await readJson(req);
-    const catalogue = await provider.models();
-    const resolved = resolveCreateModel(catalogue, requestedModel(body));
-    if (resolved === undefined) {
-      writeJson(res, 404, modelNotFoundError(requestedModel(body)), requestId);
-      return;
-    }
-    writeJson(res, 200, { object: "stub", model: resolved }, requestId);
+    const catalogue = await runPinned(pin, () => provider.models());
+    await runPinned(pin, () =>
+      handleChatCompletion({
+        res,
+        requestId,
+        body,
+        provider,
+        catalogue,
+        pin,
+      }),
+    );
     return;
   }
   writeJson(res, 404, notFoundError, requestId);
@@ -147,14 +159,6 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   } catch {
     throw new HttpError(400, invalidJsonError);
   }
-}
-
-function requestedModel(body: unknown): string | undefined {
-  if (body === null || typeof body !== "object" || Array.isArray(body)) {
-    return undefined;
-  }
-  const model = (body as { model?: unknown }).model;
-  return typeof model === "string" ? model : undefined;
 }
 
 function bind(server: Server, host: string, port: number): Promise<void> {
