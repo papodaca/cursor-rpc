@@ -10,6 +10,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "prepublishOnly": "node --eval \"throw new Error('cursor-rpc-monorepo is private and must not be published')\""
   }
 }
