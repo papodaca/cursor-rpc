@@ -29,6 +29,39 @@ export const invalidApiKeyError = openaiError({
   code: "invalid_api_key",
 });
 
+export const invalidJsonError = openaiError({
+  message: "Invalid JSON body",
+  type: "invalid_request_error",
+  param: null,
+  code: "invalid_json",
+});
+
+export const notFoundError = openaiError({
+  message: "Invalid URL",
+  type: "invalid_request_error",
+  param: null,
+  code: null,
+});
+
+export const internalError = openaiError({
+  message: "Internal server error",
+  type: "api_error",
+  param: null,
+  code: "internal_error",
+});
+
+export class HttpError extends Error {
+  readonly status: number;
+  readonly body: OpenAIErrorBody;
+
+  constructor(status: number, body: OpenAIErrorBody) {
+    super(body.error.message);
+    this.name = "HttpError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
 export function writeJson(res: ServerResponse, status: number, body: unknown, requestId: string): void {
   if (res.writableEnded) {
     return;

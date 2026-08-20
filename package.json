@@ -18,6 +18,7 @@
     "typescript": "^7.0.2"
   },
   "allowScripts": {
-    "@bufbuild/buf@1.72.0": true
+    "@bufbuild/buf@1.72.0": true,
+    "esbuild": true
   }
 }
