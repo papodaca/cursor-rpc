@@ -30,7 +30,6 @@ export type DispatchHandlers = {
 
 export type InFlightExec = {
   abort: AbortController;
-  replied: boolean;
 };
 
 export function replyRejected(id: number, reason = "User Rejected", queryCase?: InteractionQuery["query"]["case"]): AgentClientMessage {
@@ -199,7 +198,7 @@ export async function dispatchServerMessage(
   }
   if (inbound.message.case === "execServerMessage") {
     const exec = inbound.message.value;
-    const flight = options.inFlight.get(exec.id) ?? { abort: new AbortController(), replied: false };
+    const flight = options.inFlight.get(exec.id) ?? { abort: new AbortController() };
     options.inFlight.set(exec.id, flight);
     try {
       if (options.signal?.aborted || flight.abort.signal.aborted) {
@@ -216,7 +215,6 @@ export async function dispatchServerMessage(
     } catch {
       return defaultExecReply(exec);
     } finally {
-      flight.replied = true;
       options.inFlight.delete(exec.id);
     }
   }

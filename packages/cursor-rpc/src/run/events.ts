@@ -18,7 +18,7 @@ export type RunEvent =
   | { type: "prompt_suggestion"; suggestion: string }
   | { type: "routed_model"; displayName: string }
   | { type: "checkpoint" }
-  | { type: "connection"; state: "connected" | "failed" };
+  | { type: "connection"; state: "connected" };
 
 export type RunResult = {
   text: string;

@@ -21,8 +21,8 @@ import type { AuthSession } from "../auth/session.js";
 import { dispatchServerMessage, type DispatchHandlers, type InFlightExec } from "./dispatch.js";
 import { startHeartbeat, startStallTimer } from "./heartbeat.js";
 import { AsyncQueue } from "./queue.js";
-import { buildConversationHistory } from "./transcript.js";
-import type { RunEvent, RunResult, UsageCounts } from "./events.js";
+import { buildConversationHistory, textFromEvents } from "./transcript.js";
+import type { RunEvent, RunResult } from "./events.js";
 
 export const DEFAULT_EXCLUDE_TOOLS = ["web_search_tool_call", "web_fetch_tool_call"] as const;
 
@@ -35,8 +35,6 @@ export type RunOptions = {
   handlers?: DispatchHandlers;
   heartbeatMs?: number;
   stallMs?: number;
-  allowWebSearch?: boolean;
-  allowWebFetch?: boolean;
   auth?: AuthSession;
   onUnauthenticated?: (error: unknown) => void;
 };
@@ -50,10 +48,10 @@ export type RunHandle = AsyncIterable<RunEvent> & {
 export function runHeaders(options: { allowWebSearch?: boolean; allowWebFetch?: boolean } = {}): Headers {
   const exclude: string[] = [];
   if (options.allowWebSearch !== true) {
-    exclude.push("web_search_tool_call");
+    exclude.push(DEFAULT_EXCLUDE_TOOLS[0]);
   }
   if (options.allowWebFetch !== true) {
-    exclude.push("web_fetch_tool_call");
+    exclude.push(DEFAULT_EXCLUDE_TOOLS[1]);
   }
   const headers = new Headers();
   if (exclude.length > 0) {
@@ -96,10 +94,8 @@ export function runTurn(options: RunOptions): RunHandle {
   const collected: RunEvent[] = [];
   const inFlight = new Map<number, InFlightExec>();
   const abort = new AbortController();
-  let settled: Promise<RunResult> | undefined;
   let heartbeat: { stop: () => void } | undefined;
   let stall: { touch: () => void; stop: () => void } | undefined;
-  let usage: UsageCounts = {};
 
   const stopTimers = () => {
     heartbeat?.stop();
@@ -119,7 +115,14 @@ export function runTurn(options: RunOptions): RunHandle {
     return result;
   };
 
-  options.signal?.addEventListener("abort", () => abort.abort(options.signal?.reason), { once: true });
+  const throwIfAborted = (): never => {
+    throw abort.signal.reason instanceof StreamError
+      ? abort.signal.reason
+      : CancelledError.fromAbort(abort.signal.reason);
+  };
+
+  const onCallerAbort = () => abort.abort(options.signal?.reason);
+  options.signal?.addEventListener("abort", onCallerAbort, { once: true });
 
   const loop = (async () => {
     try {
@@ -145,54 +148,46 @@ export function runTurn(options: RunOptions): RunHandle {
       );
 
       const iterator = options.inbound[Symbol.asyncIterator]();
-      while (!abort.signal.aborted) {
-          const next = await Promise.race([
-            iterator.next(),
-            new Promise<IteratorResult<AgentServerMessage>>((_, reject) => {
-              const onAbort = () => {
-                reject(abort.signal.reason instanceof Error ? abort.signal.reason : CancelledError.fromAbort(abort.signal.reason));
-              };
-              if (abort.signal.aborted) {
-                onAbort();
-                return;
-              }
-              abort.signal.addEventListener("abort", onAbort, { once: true });
-            }),
-          ]);
-          if (next.done === true) {
-            if (abort.signal.aborted) {
-              throw abort.signal.reason instanceof StreamError
-                ? abort.signal.reason
-                : CancelledError.fromAbort(abort.signal.reason);
-            }
-            break;
-          }
-          const inbound = next.value;
+      const abortWait = new Promise<IteratorResult<AgentServerMessage>>((resolve) => {
+        const onAbort = () => {
+          resolve({ done: true, value: undefined });
+        };
         if (abort.signal.aborted) {
-          throw abort.signal.reason instanceof StreamError
-            ? abort.signal.reason
-            : CancelledError.fromAbort(abort.signal.reason);
+          onAbort();
+          return;
+        }
+        abort.signal.addEventListener("abort", onAbort, { once: true });
+      });
+      while (!abort.signal.aborted) {
+        const next = await Promise.race([iterator.next(), abortWait]);
+        if (next.done === true) {
+          if (abort.signal.aborted) {
+            throwIfAborted();
+          }
+          break;
+        }
+        if (abort.signal.aborted) {
+          throwIfAborted();
         }
         stall?.touch();
-        const event = toPublicEvent(inbound);
+        const event = toPublicEvent(next.value);
         if (event !== undefined) {
           collected.push(event);
           events.push(event);
           if (event.type === "turn_ended") {
-            usage = event.usage;
             return finish({
-              text: collected.filter((item) => item.type === "text_delta").map((item) => item.text).join(""),
-              usage,
+              text: textFromEvents(collected),
+              usage: event.usage,
               events: collected,
             });
           }
         }
-        if (inbound.message.case === "execServerMessage") {
-          const exec = inbound.message.value;
+        if (next.value.message.case === "execServerMessage") {
+          const exec = next.value.message.value;
           if (!inFlight.has(exec.id)) {
-            inFlight.set(exec.id, { abort: new AbortController(), replied: false });
+            inFlight.set(exec.id, { abort: new AbortController() });
           }
-          void dispatchServerMessage(inbound, {
+          void dispatchServerMessage(next.value, {
             handlers: options.handlers,
             inFlight,
             signal: abort.signal,
@@ -203,7 +198,7 @@ export function runTurn(options: RunOptions): RunHandle {
           });
           continue;
         }
-        const reply = await dispatchServerMessage(inbound, {
+        const reply = await dispatchServerMessage(next.value, {
           handlers: options.handlers,
           inFlight,
           signal: abort.signal,
@@ -212,11 +207,8 @@ export function runTurn(options: RunOptions): RunHandle {
           await options.send(reply);
         }
       }
-      if (abort.signal.reason instanceof StreamError) {
-        throw abort.signal.reason;
-      }
       if (abort.signal.aborted) {
-        throw CancelledError.fromAbort(abort.signal.reason);
+        throwIfAborted();
       }
       throw new StreamError("stream ended without turn_ended", { code: "unknown" });
     } catch (error) {
@@ -243,16 +235,10 @@ export function runTurn(options: RunOptions): RunHandle {
       fail(error);
       throw error;
     } finally {
+      options.signal?.removeEventListener("abort", onCallerAbort);
       stopTimers();
     }
   })();
-
-  settled = loop.then(
-    (result) => result,
-    (error: unknown) => {
-      throw error;
-    },
-  );
 
   return {
     async *[Symbol.asyncIterator]() {
@@ -265,7 +251,7 @@ export function runTurn(options: RunOptions): RunHandle {
         stopTimers();
       }
     },
-    wait: () => settled ?? Promise.reject(new StreamError("run was not started", { code: "internal" })),
+    wait: () => loop,
     abort: () => abort.abort(),
     conversationHistory: () => buildConversationHistory(options.prompt, collected),
   };
@@ -311,11 +297,14 @@ function toPublicEvent(inbound: AgentServerMessage): RunEvent | undefined {
         },
       };
     case "toolCallStarted":
-      return { type: "tool_call", callId: update.value.callId, toolCallId: update.value.toolCall?.toolCallId, phase: "started" };
     case "toolCallCompleted":
-      return { type: "tool_call", callId: update.value.callId, toolCallId: update.value.toolCall?.toolCallId, phase: "completed" };
     case "partialToolCall":
-      return { type: "tool_call", callId: update.value.callId, toolCallId: update.value.toolCall?.toolCallId, phase: "partial" };
+      return {
+        type: "tool_call",
+        callId: update.value.callId,
+        toolCallId: update.value.toolCall?.toolCallId,
+        phase: update.case === "toolCallStarted" ? "started" : update.case === "toolCallCompleted" ? "completed" : "partial",
+      };
     case "promptSuggestion":
       return { type: "prompt_suggestion", suggestion: update.value.suggestion };
     case "routedModel":

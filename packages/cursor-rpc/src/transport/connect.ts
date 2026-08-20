@@ -33,24 +33,16 @@ export function createOriginConnection(
     pingIdleConnection: true,
   });
   const interceptors = [createHeaderInterceptor(options), ...(options.interceptors ?? [])];
-  const jsonTransport = createConnectTransport({
+  const shared = {
     baseUrl: origin,
-    httpVersion: "2",
-    useBinaryFormat: false,
+    httpVersion: "2" as const,
     sessionManager,
     interceptors,
     jsonOptions: { ignoreUnknownFields: true },
     nodeOptions: options.insecure === true ? { rejectUnauthorized: false } : undefined,
-  });
-  const binaryTransport = createConnectTransport({
-    baseUrl: origin,
-    httpVersion: "2",
-    useBinaryFormat: true,
-    sessionManager,
-    interceptors,
-    jsonOptions: { ignoreUnknownFields: true },
-    nodeOptions: options.insecure === true ? { rejectUnauthorized: false } : undefined,
-  });
+  };
+  const jsonTransport = createConnectTransport({ ...shared, useBinaryFormat: false });
+  const binaryTransport = createConnectTransport({ ...shared, useBinaryFormat: true });
   const codecMemory = createCodecMemory();
   const transport = createCodecFallbackTransport(jsonTransport, binaryTransport, codecMemory);
   return {

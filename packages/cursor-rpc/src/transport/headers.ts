@@ -27,7 +27,6 @@ export function applyProtocolHeaders(
 ): void {
   const extra = new Headers(providers.extraHeaders);
   extra.delete("x-cursor-checksum");
-  extra.delete("X-Cursor-Checksum");
   extra.forEach((value, key) => {
     if (!headers.has(key)) {
       headers.set(key, value);

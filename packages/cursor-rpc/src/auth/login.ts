@@ -24,7 +24,7 @@ export function createLoginChallenge(options: CreateLoginChallengeOptions): Logi
   const verifier = toBase64Url(bytes);
   const challenge = toBase64Url(createHash("sha256").update(verifier, "utf8").digest());
   const uuid = options.uuid?.() ?? randomUUID();
-  const websiteUrl = options.websiteUrl.replace(/\/+$/, "");
+  const websiteUrl = stripTrailingSlash(options.websiteUrl);
   const redirectTarget = options.redirectTarget ?? "cli";
   const url =
     `${websiteUrl}/loginDeepControl?challenge=${encodeURIComponent(challenge)}` +

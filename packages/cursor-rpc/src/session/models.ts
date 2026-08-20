@@ -23,7 +23,7 @@ export function mergeModelCatalogue(
   if (usable instanceof Error) {
     throw usable;
   }
-  const models = usable.models.length > 0 ? usable.models : [];
+  const models = usable.models;
   const aliasMap = buildAliasMap(models);
   const catalogue: ModelCatalogue = { models, aliasMap };
   if (defaultModel !== undefined && !(defaultModel instanceof Error)) {

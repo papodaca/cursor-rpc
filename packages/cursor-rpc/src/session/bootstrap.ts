@@ -1,7 +1,7 @@
 import { PrivacyMode, type GetUserPrivacyModeResponse } from "../generated/aiserver/v1/dashboard_pb.js";
 import type { GetServerConfigResponse } from "../generated/aiserver/v1/server_config_pb.js";
 import type { AvailableModelsResponse, GetDefaultModelForCliResponse, GetUsableModelsResponse } from "../generated/aiserver/v1/models_pb.js";
-import { http2Decision, parseAgentUrlConfig, privacyProbeUrl, selectAgentBaseUrl, type Http2Decision } from "./host.js";
+import { http2Decision, privacyProbeUrl, selectAgentBaseUrl, type Http2Decision } from "./host.js";
 import { mergeModelCatalogue, withTimeout, type ModelCatalogue } from "./models.js";
 
 export type BootstrapClients = {
@@ -34,16 +34,15 @@ export async function bootstrap(options: {
   const agentBaseUrl = selectAgentBaseUrl(
     apiUrl,
     ghostMode,
-    parseAgentUrlConfig(config.agentUrlConfig) ?? config.agentUrlConfig,
+    config.agentUrlConfig,
     http2.usingHttp1,
   );
 
-  const usablePromise = options.clients.getUsableModels().then((value) => value, (error: unknown) => error as Error);
-  const defaultPromise = options.clients.getDefaultModelForCli().then((value) => value, (error: unknown) => error as Error);
-  const paramsPromise = withTimeout(
-    options.clients.availableModels(),
-    options.availableModelsTimeoutMs ?? 2000,
-  ).then((value) => value, (error: unknown) => error as Error);
+  const usablePromise = catchAsError(options.clients.getUsableModels());
+  const defaultPromise = catchAsError(options.clients.getDefaultModelForCli());
+  const paramsPromise = catchAsError(
+    withTimeout(options.clients.availableModels(), options.availableModelsTimeoutMs ?? 2000),
+  );
 
   const [usable, defaultModel, parameterized] = await Promise.all([usablePromise, defaultPromise, paramsPromise]);
   const models = mergeModelCatalogue(
@@ -75,4 +74,8 @@ export async function resolveGhostMode(clients: Pick<BootstrapClients, "getUserP
   } catch {
     return true;
   }
+}
+
+function catchAsError<T>(promise: Promise<T>): Promise<T | Error> {
+  return promise.then((value) => value, (error: unknown) => error as Error);
 }

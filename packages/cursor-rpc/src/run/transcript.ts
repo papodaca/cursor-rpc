@@ -11,6 +11,13 @@ import {
 } from "../generated/agent/v1/agent_pb.js";
 import type { RunEvent } from "./events.js";
 
+export function textFromEvents(events: RunEvent[]): string {
+  return events
+    .filter((event) => event.type === "text_delta")
+    .map((event) => event.text)
+    .join("");
+}
+
 export function buildConversationHistory(prompt: string, events: RunEvent[]): ConversationHistory {
   const messages = [
     create(ConversationHistoryMessageSchema, {
@@ -29,10 +36,7 @@ export function buildConversationHistory(prompt: string, events: RunEvent[]): Co
       },
     }),
   ];
-  const assistantText = events
-    .filter((event) => event.type === "text_delta")
-    .map((event) => event.text)
-    .join("");
+  const assistantText = textFromEvents(events);
   if (assistantText.length > 0) {
     messages.push(
       create(ConversationHistoryMessageSchema, {

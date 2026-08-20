@@ -1,4 +1,4 @@
-import { AuthenticationError, CursorRpcError } from "./errors.js";
+import { AuthenticationError } from "./errors.js";
 import { MemoryCredentialStore, type CredentialStore } from "./credentials.js";
 import { AuthSession } from "./auth/session.js";
 import { createLoginChallenge, pollLogin, type LoginChallenge } from "./auth/login.js";
@@ -64,6 +64,7 @@ export type ClientRunOptions = {
 export type CursorRpcClient = {
   models: (signal?: AbortSignal) => Promise<ModelCatalogue>;
   run: (options: ClientRunOptions) => Promise<RunHandle>;
+  close: () => void;
 };
 
 export function createClient(options: CreateClientOptions = {}): CursorRpcClient {
@@ -123,6 +124,7 @@ class CursorRpcClientImpl implements CursorRpcClient {
   #auth: AuthSession;
   #bearer: string | undefined;
   #session: BootstrapSession | undefined;
+  #sessionPromise: Promise<BootstrapSession> | undefined;
   #origins = new Map<string, OriginConnection>();
 
   constructor(options: CreateClientOptions, environment: ResolvedEnvironment, auth: AuthSession) {
@@ -137,7 +139,7 @@ class CursorRpcClientImpl implements CursorRpcClient {
       return session.models;
     } catch (error) {
       this.#recordAuthFailure(error);
-      throw error instanceof CursorRpcError ? error : mapTransportError(error);
+      throw mapTransportError(error);
     }
   }
 
@@ -145,7 +147,6 @@ class CursorRpcClientImpl implements CursorRpcClient {
     try {
       const session = await this.#ensureSession(options.signal);
       assertRunTransport(session.http2);
-      await this.#refreshBearer(options.signal);
       const outbound = new AsyncQueue<AgentClientMessage>();
       const headers = agentToolHeaders(this.#options.tools, options);
       const signal = options.signal ?? this.#options.signal;
@@ -161,8 +162,6 @@ class CursorRpcClientImpl implements CursorRpcClient {
         },
         signal,
         handlers: options.handlers,
-        allowWebSearch: options.allowWebSearch ?? this.#options.tools?.allowWebSearch,
-        allowWebFetch: options.allowWebFetch ?? this.#options.tools?.allowWebFetch,
         auth: this.#auth,
         onUnauthenticated: (error) => {
           this.#recordAuthFailure(error);
@@ -171,7 +170,7 @@ class CursorRpcClientImpl implements CursorRpcClient {
       return attachOutbound(handle, outbound);
     } catch (error) {
       this.#recordAuthFailure(error);
-      throw error instanceof CursorRpcError ? error : mapTransportError(error);
+      throw mapTransportError(error);
     }
   }
 
@@ -180,7 +179,7 @@ class CursorRpcClientImpl implements CursorRpcClient {
     if (this.#session !== undefined) {
       return this.#session;
     }
-    this.#session = await bootstrap({
+    this.#sessionPromise ??= bootstrap({
       apiUrl: this.#environment.apiUrl,
       getAccessToken: async () => {
         await this.#refreshBearer(signal);
@@ -189,29 +188,46 @@ class CursorRpcClientImpl implements CursorRpcClient {
         }
         return this.#bearer;
       },
-      clients: this.#options.bootstrapClients ?? this.#createBootstrapClients(),
-    });
-    return this.#session;
+      clients: this.#options.bootstrapClients ?? this.#createBootstrapClients(signal),
+    }).then(
+      (session) => {
+        this.#session = session;
+        return session;
+      },
+      (error: unknown) => {
+        this.#sessionPromise = undefined;
+        throw error;
+      },
+    );
+    return this.#sessionPromise;
+  }
+
+  close(): void {
+    for (const connection of this.#origins.values()) {
+      connection.close();
+    }
+    this.#origins.clear();
   }
 
   async #refreshBearer(signal?: AbortSignal): Promise<void> {
     this.#bearer = await this.#auth.accessToken(signal ?? this.#options.signal);
   }
 
-  #createBootstrapClients(): BootstrapClients {
+  #createBootstrapClients(signal?: AbortSignal): BootstrapClients {
+    const callSignal = signal ?? this.#options.signal;
     return {
       getServerConfig: () =>
-        unaryCall(this.#origin(this.#environment.apiUrl).transport, ServerConfigService.method.getServerConfig, {}),
+        unaryCall(this.#origin(this.#environment.apiUrl).transport, ServerConfigService.method.getServerConfig, {}, { signal: callSignal }),
       getUserPrivacyMode: (baseUrl) =>
-        unaryCall(this.#origin(baseUrl).transport, DashboardService.method.getUserPrivacyMode, {}),
+        unaryCall(this.#origin(baseUrl).transport, DashboardService.method.getUserPrivacyMode, {}, { signal: callSignal }),
       getUsableModels: () =>
-        unaryCall(this.#origin(this.#environment.apiUrl).transport, AiService.method.getUsableModels, {}),
+        unaryCall(this.#origin(this.#environment.apiUrl).transport, AiService.method.getUsableModels, {}, { signal: callSignal }),
       getDefaultModelForCli: () =>
-        unaryCall(this.#origin(this.#environment.apiUrl).transport, AiService.method.getDefaultModelForCli, {}),
+        unaryCall(this.#origin(this.#environment.apiUrl).transport, AiService.method.getDefaultModelForCli, {}, { signal: callSignal }),
       availableModels: () =>
         unaryCall(this.#origin(this.#environment.apiUrl).transport, AiService.method.availableModels, {
           useModelParameters: true,
-        }),
+        }, { signal: callSignal }),
     };
   }
 

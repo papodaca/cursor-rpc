@@ -24,11 +24,7 @@ export class AsyncQueue<T> {
     this.#error = error;
     const waiters = this.#waiters.splice(0);
     for (const waiter of waiters) {
-      if (error !== undefined) {
-        waiter({ value: undefined, done: true });
-      } else {
-        waiter({ value: undefined, done: true });
-      }
+      waiter({ value: undefined, done: true });
     }
   }
 
