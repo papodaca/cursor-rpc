@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
-const serverDir = path.join(root, "apps", "cursor-rpc-openai-server");
+const serverDir = path.join(root, "packages", "cursor-rpc-openai-server");
 const libDir = path.join(root, "packages", "cursor-rpc");
 const piDir = path.join(root, "packages", "cursor-rpc-pi");
 const toolsDir = path.join(root, "packages", "cursor-rpc-pi-tools");
@@ -56,10 +56,31 @@ describe("workspace link", () => {
     assert.equal(realpathSync(toolsLinkPath), realpathSync(toolsDir));
   });
 
-  it("loads the stub export from the server workspace after library build", () => {
+  it("loads cursor-rpc from the server workspace after library build", () => {
     const result = importCursorRpcFromServer();
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), "cursor-rpc");
+  });
+
+  it("has a single workspace named cursor-rpc-openai-server", () => {
+    const names = [];
+    for (const glob of ["packages", "apps"]) {
+      const dir = path.join(root, glob);
+      if (!existsSync(dir)) {
+        continue;
+      }
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        const pkg = path.join(dir, entry.name, "package.json");
+        if (!existsSync(pkg)) {
+          continue;
+        }
+        names.push(JSON.parse(readFileSync(pkg, "utf8")).name);
+      }
+    }
+    assert.equal(names.filter((name) => name === "cursor-rpc-openai-server").length, 1);
   });
 
   it("imports createWebClient from the tools workspace after library build", () => {
