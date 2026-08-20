@@ -1,6 +1,6 @@
 # cursor-rpc-pi-tools
 
-Pi-installable tools that register `web_fetch` and `web_search`. Pi's model calls them. Cursor's authenticated unary RPCs retrieve Markdown and search documents. This is not `@cursor/sdk` and not the `cursor-rpc-pi` provider stub.
+Pi-installable tools that register `web_fetch` and `web_search`. Pi's model calls them. Cursor's authenticated unary RPCs retrieve Markdown and search documents. This is not `@cursor/sdk` and not the `cursor-rpc-pi` model provider.
 
 ## Local install
 

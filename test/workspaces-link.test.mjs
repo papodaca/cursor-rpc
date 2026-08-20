@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync, realpathSync, renameSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync } from "node:fs";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,19 @@ function importCreateWebClientFromTools() {
     toolsDir,
     "import { createWebClient } from 'cursor-rpc'; console.log(typeof createWebClient);",
   );
+}
+
+function collectTs(dir) {
+  const chunks = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      chunks.push(collectTs(file));
+    } else if (entry.name.endsWith(".ts")) {
+      chunks.push(readFileSync(file, "utf8"));
+    }
+  }
+  return chunks.join("\n");
 }
 
 describe("workspace link", () => {
@@ -69,14 +82,14 @@ describe("workspace link", () => {
     }
   });
 
-  it("keeps Pi package identity on tools and not on the provider stub", () => {
+  it("keeps web tool Pi package identity on tools, not on the provider", () => {
     const tools = JSON.parse(readFileSync(path.join(toolsDir, "package.json"), "utf8"));
-    const provider = JSON.parse(readFileSync(path.join(piDir, "package.json"), "utf8"));
     assert.equal(tools.keywords?.includes("pi-package"), true);
     assert.deepEqual(tools.pi?.extensions, ["./src/index.ts"]);
     assert.match(tools.dependencies?.["cursor-rpc"] ?? "", /^\^1\.0\.0$/);
-    assert.equal(provider.pi, undefined);
-    assert.equal(provider.keywords?.includes("pi-package") ?? false, false);
+    const providerSrc = collectTs(path.join(piDir, "src"));
+    assert.equal(providerSrc.includes("web_fetch"), false);
+    assert.equal(providerSrc.includes("web_search"), false);
   });
 
   it("fails to import when dist is missing, then succeeds after restore", () => {
