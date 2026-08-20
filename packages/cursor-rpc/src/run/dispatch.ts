@@ -7,6 +7,9 @@ import {
   ExecClientMessageSchema,
   ExecClientThrowSchema,
   GetBlobResultSchema,
+  McpResultSchema,
+  McpToolErrorSchema,
+  McpToolSuccessSchema,
   InteractionResponseSchema,
   KvClientMessageSchema,
   RejectedSchema,
@@ -69,6 +72,36 @@ export function replyRejected(id: number, reason = "User Rejected", queryCase?: 
     message: {
       case: "interactionResponse",
       value: create(InteractionResponseSchema, { id, result }),
+    },
+  });
+}
+
+export function replyMcpResult(
+  id: number,
+  execId: string,
+  result: { text?: string; error?: string } = {},
+): AgentClientMessage {
+  const payload =
+    result.error !== undefined
+      ? {
+          case: "error" as const,
+          value: create(McpToolErrorSchema, { error: result.error }),
+        }
+      : {
+          case: "success" as const,
+          value: create(McpToolSuccessSchema, { text: result.text ?? "" }),
+        };
+  return create(AgentClientMessageSchema, {
+    message: {
+      case: "execClientMessage",
+      value: create(ExecClientMessageSchema, {
+        id,
+        execId,
+        message: {
+          case: "mcpResult",
+          value: create(McpResultSchema, { result: payload }),
+        },
+      }),
     },
   });
 }

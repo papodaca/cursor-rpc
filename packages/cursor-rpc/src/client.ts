@@ -20,7 +20,7 @@ import { assertRunTransport } from "./session/host.js";
 import type { ModelCatalogue } from "./session/models.js";
 import type { DispatchHandlers } from "./run/dispatch.js";
 import type { RunHandle } from "./run/run.js";
-import { runHeaders, runTurn } from "./run/run.js";
+import { runHeaders, runTurn, type McpToolDto } from "./run/run.js";
 import { AsyncQueue } from "./run/queue.js";
 
 export type ClientTools = {
@@ -56,10 +56,19 @@ export type CreateClientOptions = {
 export type ClientRunOptions = {
   prompt: string;
   conversationHistory?: ConversationHistory;
+  conversationId?: string;
+  runId?: string;
+  mode?: "ask" | "agent";
+  mcpTools?: McpToolDto[];
+  customSystemPrompt?: string;
+  maxTokens?: number;
+  modelId?: string;
   signal?: AbortSignal;
   handlers?: DispatchHandlers;
   allowWebSearch?: boolean;
   allowWebFetch?: boolean;
+  allowedTools?: string[];
+  excludeTools?: string[];
 };
 
 export type CursorRpcClient = {
@@ -162,6 +171,13 @@ class CursorRpcClientImpl implements CursorRpcClient {
       const handle = runTurn({
         prompt: options.prompt,
         conversationHistory: options.conversationHistory,
+        conversationId: options.conversationId,
+        runId: options.runId,
+        mode: options.mode,
+        mcpTools: options.mcpTools,
+        customSystemPrompt: options.customSystemPrompt,
+        maxTokens: options.maxTokens,
+        modelId: options.modelId,
         inbound,
         send: (message) => {
           outbound.push(message);
@@ -305,18 +321,14 @@ function combineSignals(...signals: Array<AbortSignal | undefined>): AbortSignal
 }
 
 function agentToolHeaders(tools: ClientTools | undefined, run: ClientRunOptions): Headers {
-  const headers = runHeaders({
+  const mcpTools = run.mcpTools !== undefined && run.mcpTools.length > 0;
+  return runHeaders({
     allowWebSearch: run.allowWebSearch ?? tools?.allowWebSearch,
     allowWebFetch: run.allowWebFetch ?? tools?.allowWebFetch,
+    mcpTools,
+    allowedTools: run.allowedTools ?? tools?.allowed,
+    excludeTools: mcpTools ? undefined : (run.excludeTools ?? tools?.exclude),
   });
-  if (tools?.exclude !== undefined && tools.exclude.length > 0) {
-    const current = headers.get("x-cursor-agent-exclude-tools")?.split(",").filter((name) => name.length > 0) ?? [];
-    headers.set("x-cursor-agent-exclude-tools", [...current, ...tools.exclude].join(","));
-  }
-  if (tools?.allowed !== undefined && tools.allowed.length > 0) {
-    headers.set("x-cursor-agent-allowed-tools", tools.allowed.join(","));
-  }
-  return headers;
 }
 
 function attachOutbound(

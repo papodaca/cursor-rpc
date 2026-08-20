@@ -15,6 +15,14 @@ export type RunEvent =
   | { type: "heartbeat" }
   | { type: "turn_ended"; usage: UsageCounts }
   | { type: "tool_call"; callId: string; toolCallId?: string; phase: "started" | "completed" | "partial" }
+  | {
+      type: "mcp_exec";
+      id: number;
+      execId: string;
+      name: string;
+      argumentsJson: string;
+      toolCallId?: string;
+    }
   | { type: "prompt_suggestion"; suggestion: string }
   | { type: "routed_model"; displayName: string }
   | { type: "checkpoint" }

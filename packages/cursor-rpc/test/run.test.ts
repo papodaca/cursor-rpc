@@ -270,16 +270,27 @@ describe("run turn", () => {
 
   it("abort during stream tears down and rejects wait", async () => {
     const inbound = new AsyncQueue<AgentServerMessage>();
+    const outbound: AgentClientMessage[] = [];
     const handle = runTurn({
       prompt: "hi",
       inbound,
-      send: () => undefined,
+      send: (message) => {
+        outbound.push(message);
+      },
       heartbeatMs: 60_000,
       stallMs: 60_000,
     });
     handle.abort();
     inbound.close();
     await expect(handle.wait()).rejects.toBeInstanceOf(CancelledError);
+    expect(
+      outbound.some((message) => {
+        if (message.message.case !== "conversationAction") {
+          return false;
+        }
+        return message.message.value.action.case === "cancelAction";
+      }),
+    ).toBe(true);
   });
 
   it("mid-stream Unauthenticated clears the store, rejects wait, and does not start another Run", async () => {
@@ -320,6 +331,12 @@ describe("run turn", () => {
     expect(action.value.requestContext?.env?.workspacePaths).toEqual([]);
     expect(action.value.requestContext?.fileContents).toEqual({});
     expect(opening.message.value.excludeWorkspaceContext).toBe(true);
+    const withModel = openingRunRequest("hello", undefined, { modelId: "composer-2.5" });
+    expect(withModel.message.case).toBe("runRequest");
+    if (withModel.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(withModel.message.value.requestedModel?.modelId).toBe("composer-2.5");
   });
 
   it("second turn history omits conversationState blobs", async () => {

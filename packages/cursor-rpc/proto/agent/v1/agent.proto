@@ -321,6 +321,7 @@ message ExecServerMessage {
   string exec_id = 15;
   oneof message {
     RequestContextArgs request_context_args = 10;
+    McpArgs mcp_args = 11;
     WebFetchAllowlistPrecheckArgs web_fetch_allowlist_precheck_args = 43;
   }
 }
@@ -331,8 +332,31 @@ message ExecClientMessage {
   optional int32 local_execution_time_ms = 39;
   oneof message {
     RequestContextResult request_context_result = 10;
+    McpResult mcp_result = 11;
     WebFetchAllowlistPrecheckResult web_fetch_allowlist_precheck_result = 43;
   }
+}
+
+message McpArgs {
+  string name = 1;
+  map<string, bytes> args = 2;
+  optional string tool_call_id = 4;
+  string tool_name = 5;
+}
+
+message McpResult {
+  oneof result {
+    McpToolSuccess success = 1;
+    McpToolError error = 2;
+  }
+}
+
+message McpToolSuccess {
+  string text = 1;
+}
+
+message McpToolError {
+  string error = 1;
 }
 
 message RequestContextArgs {}
