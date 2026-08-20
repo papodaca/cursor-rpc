@@ -1,3 +1,4 @@
+import { CursorRpcError } from "../errors.js";
 import type { AvailableModel, GetDefaultModelForCliResponse, GetUsableModelsResponse, ModelDetails } from "../generated/aiserver/v1/models_pb.js";
 
 const PARAMETERIZED_EXCLUSIONS = new Set([
@@ -22,6 +23,9 @@ export function mergeModelCatalogue(
 ): ModelCatalogue {
   if (usable instanceof Error) {
     throw usable;
+  }
+  if (usable.models.length === 0) {
+    throw new CursorRpcError("usable models list is empty", { code: "failed_precondition" });
   }
   const models = usable.models;
   const aliasMap = buildAliasMap(models);
@@ -56,6 +60,12 @@ export function buildAliasMap(models: ModelDetails[]): Map<string, string> {
     if (model.displayModelId.length > 0) {
       map.set(model.displayModelId.toLowerCase(), id);
     }
+    if (model.displayName.length > 0) {
+      map.set(model.displayName.toLowerCase(), id);
+    }
+    if (model.displayNameShort.length > 0) {
+      map.set(model.displayNameShort.toLowerCase(), id);
+    }
   }
   return map;
 }
@@ -68,13 +78,32 @@ export function filterParameterized(models: AvailableModel[]): AvailableModel[] 
   return useful ? kept : undefined;
 }
 
-export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | "timed_out"> {
+export async function withTimeout<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T | "timed_out"> {
+  const controller = new AbortController();
+  let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const workPromise = work(controller.signal);
+  void workPromise.catch(() => undefined);
   try {
-    return await Promise.race([
-      promise,
+    return await Promise.race<T | "timed_out">([
+      workPromise.then(
+        (value): T | "timed_out" => (timedOut ? "timed_out" : value),
+        (error: unknown): T | "timed_out" => {
+          if (timedOut || controller.signal.aborted) {
+            return "timed_out";
+          }
+          throw error;
+        },
+      ),
       new Promise<"timed_out">((resolve) => {
-        timer = setTimeout(() => resolve("timed_out"), timeoutMs);
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          resolve("timed_out");
+        }, timeoutMs);
       }),
     ]);
   } finally {

@@ -29,7 +29,7 @@ const result = await run.wait();
 console.log(models.models.length, result.text, result.usage);
 ```
 
-Constructor options override `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`, `CURSOR_API_ENDPOINT`, `CURSOR_API_BASE_URL`, and `CURSOR_WEBSITE_URL`. A raw session token can be passed as `authToken`. Missing credentials throw; the library never opens a browser on its own.
+Constructor options override `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`, `CURSOR_API_ENDPOINT`, `CURSOR_API_BASE_URL`, and `CURSOR_WEBSITE_URL`. A raw session token can be passed as `authToken`. A `login().wait()` result can be passed as `credentials`. Missing credentials throw; the library never opens a browser on its own.
 
 ## Public exports
 
@@ -38,7 +38,7 @@ Constructor options override `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`, `CURSOR_API_
 - `name` — package identity export (`"cursor-rpc"`)
 - `MemoryCredentialStore` — default in-memory credential store
 - Errors: `CursorRpcError`, `AuthenticationError`, `PolicyError`, `CancelledError`, `TransportUnsupportedError`, `StreamError`
-- Protocol types: `AgentClientMessage`, `InteractionQuery`, `ExecServerMessage`, `ConversationHistory`
+- Protocol types: `AgentClientMessage`, `InteractionQuery`, `ExecServerMessage`, `ConversationHistory`, `ModelDetails`, `AvailableModel`
 
 ## Notes
 

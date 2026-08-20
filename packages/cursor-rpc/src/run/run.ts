@@ -244,6 +244,7 @@ export function runTurn(options: RunOptions): RunHandle {
       stopTimers();
     }
   })();
+  void loop.catch(() => undefined);
 
   return {
     async *[Symbol.asyncIterator]() {

@@ -1,7 +1,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
 import { AuthenticationError, CancelledError, CursorRpcError, PolicyError } from "../src/errors.ts";
-import { MemoryCredentialStore } from "../src/credentials.ts";
+import { MemoryCredentialStore, type CredentialStore, type StoredCredentials } from "../src/credentials.ts";
 import { exchangeApiKey } from "../src/auth/api-key.ts";
 import { createLoginChallenge, pollLogin } from "../src/auth/login.ts";
 import { AuthSession } from "../src/auth/session.ts";
@@ -56,6 +56,35 @@ describe("auth", () => {
     await expect(session.accessToken()).resolves.toBe("raw-token");
     expect(calls).toBe(0);
     expect(store.load()).toEqual({ accessToken: "raw-token", refreshToken: "raw-token" });
+  });
+
+  it("does not overwrite an async store with constructor apiKey before load resolves", async () => {
+    const token = jwt(Math.floor(Date.now() / 1000) + 3600);
+    let stored: StoredCredentials | undefined = { accessToken: token, refreshToken: "refresh" };
+    const store: CredentialStore = {
+      load: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return stored === undefined ? undefined : { ...stored };
+      },
+      save: async (value) => {
+        stored = { ...value };
+      },
+      clear: async () => {
+        stored = undefined;
+      },
+    };
+    const session = new AuthSession({
+      apiUrl: API,
+      store,
+      apiKey: "key_live_secret",
+      fetch: async () => {
+        throw new Error("should not exchange");
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(stored).toEqual({ accessToken: token, refreshToken: "refresh" });
+    await expect(session.accessToken()).resolves.toBe(token);
+    expect(stored).toEqual({ accessToken: token, refreshToken: "refresh", apiKey: "key_live_secret" });
   });
 
   it("throws authentication-required without calling login when credentials are missing", async () => {

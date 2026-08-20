@@ -95,6 +95,23 @@ describe("createClient", () => {
     expect(models.models[0]?.modelId).toBe("composer-2.5");
   });
 
+  it("accepts a login TokenPair as credentials without exchanging an API key", async () => {
+    let fetches = 0;
+    const client = createClient({
+      credentials: { accessToken: "access-from-login", refreshToken: "refresh-from-login" },
+      env: {},
+      fetch: async () => {
+        fetches += 1;
+        throw new Error("network");
+      },
+      bootstrapClients: bootstrapClients(),
+    });
+    const models = await client.models();
+    expect(models.models[0]?.modelId).toBe("composer-2.5");
+    expect(fetches).toBe(0);
+    client.close();
+  });
+
   it("throws before network when credentials and store are empty", async () => {
     let fetches = 0;
     expect(() =>

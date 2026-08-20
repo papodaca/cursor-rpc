@@ -5,7 +5,7 @@ import {
   ExecServerMessageSchema,
   InteractionQuerySchema,
 } from "../src/generated/agent/v1/agent_pb.ts";
-import { defaultExecReply, dispatchServerMessage } from "../src/run/dispatch.ts";
+import { dispatchServerMessage } from "../src/run/dispatch.ts";
 
 describe("run dispatcher", () => {
   it("rejects an unknown interaction_query with the echoed id", async () => {
@@ -52,10 +52,23 @@ describe("run dispatcher", () => {
     expect(reply.message.value.message.value.allowlisted).toBe(false);
   });
 
-  it("uses throw for unimplemented exec and still answers", () => {
-    const exec = create(ExecServerMessageSchema, { id: 4, execId: "e4" });
-    const reply = defaultExecReply(exec);
-    expect(reply.message.case).toBe("execClientControlMessage");
+  it("uses throw for unimplemented exec and still answers", async () => {
+    const inbound = create(AgentServerMessageSchema, {
+      message: {
+        case: "execServerMessage",
+        value: create(ExecServerMessageSchema, { id: 4, execId: "e4" }),
+      },
+    });
+    const reply = await dispatchServerMessage(inbound, { inFlight: new Map() });
+    expect(reply?.message.case).toBe("execClientControlMessage");
+    if (reply?.message.case !== "execClientControlMessage") {
+      throw new Error("expected execClientControlMessage");
+    }
+    expect(reply.message.value.message.case).toBe("throw");
+    if (reply.message.value.message.case !== "throw") {
+      throw new Error("expected throw");
+    }
+    expect(reply.message.value.message.value.id).toBe(4);
   });
 
   it("still sends one reply when a caller handler throws", async () => {

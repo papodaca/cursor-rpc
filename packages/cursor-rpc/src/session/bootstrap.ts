@@ -9,7 +9,7 @@ export type BootstrapClients = {
   getUserPrivacyMode: (baseUrl: string) => Promise<GetUserPrivacyModeResponse>;
   getUsableModels: () => Promise<GetUsableModelsResponse>;
   getDefaultModelForCli: () => Promise<GetDefaultModelForCliResponse>;
-  availableModels: () => Promise<AvailableModelsResponse>;
+  availableModels: (signal?: AbortSignal) => Promise<AvailableModelsResponse>;
 };
 
 export type BootstrapSession = {
@@ -41,7 +41,7 @@ export async function bootstrap(options: {
   const usablePromise = catchAsError(options.clients.getUsableModels());
   const defaultPromise = catchAsError(options.clients.getDefaultModelForCli());
   const paramsPromise = catchAsError(
-    withTimeout(options.clients.availableModels(), options.availableModelsTimeoutMs ?? 2000),
+    withTimeout((signal) => options.clients.availableModels(signal), options.availableModelsTimeoutMs ?? 2000),
   );
 
   const [usable, defaultModel, parameterized] = await Promise.all([usablePromise, defaultPromise, paramsPromise]);

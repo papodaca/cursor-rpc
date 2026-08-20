@@ -1,7 +1,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { AuthenticationError, CursorRpcError } from "../errors.js";
 import type { CredentialStore, StoredCredentials } from "../credentials.js";
-import { exchangeApiKey, type FetchLike } from "./api-key.js";
+import { exchangeApiKey, type FetchLike, type TokenPair } from "./api-key.js";
 import { isExpiringSoon } from "./token.js";
 
 export type AuthOptions = {
@@ -9,6 +9,7 @@ export type AuthOptions = {
   store: CredentialStore;
   authToken?: string;
   apiKey?: string;
+  credentials?: TokenPair;
   env?: Record<string, string | undefined>;
   fetch?: FetchLike;
   signal?: AbortSignal;
@@ -18,6 +19,8 @@ export class AuthSession {
   readonly store: CredentialStore;
   #pinned = false;
   #constructorApiKey: string | undefined;
+  #constructorAuthToken: string | undefined;
+  #constructorCredentials: TokenPair | undefined;
   #rawToken: boolean;
   #apiUrl: string;
   #fetch: FetchLike | undefined;
@@ -28,14 +31,20 @@ export class AuthSession {
     this.#apiUrl = options.apiUrl;
     this.#fetch = options.fetch;
     const env = options.env ?? process.env;
-    const authToken = first(options.authToken, env.CURSOR_AUTH_TOKEN);
+    this.#constructorAuthToken = first(options.authToken, env.CURSOR_AUTH_TOKEN);
     this.#constructorApiKey = first(options.apiKey, env.CURSOR_API_KEY);
-    this.#rawToken = authToken !== undefined;
-    if (authToken !== undefined) {
-      this.store.save({ accessToken: authToken, refreshToken: authToken });
-    } else if (this.#constructorApiKey !== undefined) {
-      const existing = snapshot(this.store.load());
-      this.store.save({ ...existing, apiKey: this.#constructorApiKey });
+    this.#constructorCredentials = options.credentials;
+    this.#rawToken = this.#constructorAuthToken !== undefined;
+    const loaded = this.store.load();
+    if (!(loaded instanceof Promise)) {
+      const next = mergeConstructorCredentials(loaded ?? {}, {
+        authToken: this.#constructorAuthToken,
+        apiKey: this.#constructorApiKey,
+        credentials: this.#constructorCredentials,
+      });
+      if (next !== undefined) {
+        this.store.save(next);
+      }
     }
   }
 
@@ -48,7 +57,15 @@ export class AuthSession {
       throw new AuthenticationError("invalid token, please log in again");
     }
     const loaded = await Promise.resolve(this.store.load());
-    const credentials = loaded ?? {};
+    const merged = mergeConstructorCredentials(loaded ?? {}, {
+      authToken: this.#constructorAuthToken,
+      apiKey: this.#constructorApiKey,
+      credentials: this.#constructorCredentials,
+    });
+    const credentials = merged ?? loaded ?? {};
+    if (merged !== undefined) {
+      await Promise.resolve(this.store.save(credentials));
+    }
     if (credentials.accessToken !== undefined && !isExpiringSoon(credentials.accessToken)) {
       return credentials.accessToken;
     }
@@ -77,7 +94,10 @@ export class AuthSession {
       return false;
     }
     try {
-      this.store.clear();
+      const cleared = this.store.clear();
+      if (cleared instanceof Promise) {
+        void cleared.catch(() => undefined);
+      }
     } catch {
       // Clearing must not itself throw.
     }
@@ -118,9 +138,37 @@ function first(...values: Array<string | undefined>): string | undefined {
   return undefined;
 }
 
-function snapshot(value: StoredCredentials | undefined | Promise<StoredCredentials | undefined>): StoredCredentials {
-  if (value instanceof Promise) {
-    return {};
+function mergeConstructorCredentials(
+  existing: StoredCredentials,
+  incoming: {
+    authToken: string | undefined;
+    apiKey: string | undefined;
+    credentials: TokenPair | undefined;
+  },
+): StoredCredentials | undefined {
+  const next = { ...existing };
+  let changed = false;
+  if (incoming.authToken !== undefined) {
+    if (next.accessToken !== incoming.authToken || next.refreshToken !== incoming.authToken) {
+      next.accessToken = incoming.authToken;
+      next.refreshToken = incoming.authToken;
+      changed = true;
+    }
+    return changed ? next : undefined;
   }
-  return value ?? {};
+  if (incoming.credentials !== undefined) {
+    if (
+      next.accessToken !== incoming.credentials.accessToken ||
+      next.refreshToken !== incoming.credentials.refreshToken
+    ) {
+      next.accessToken = incoming.credentials.accessToken;
+      next.refreshToken = incoming.credentials.refreshToken;
+      changed = true;
+    }
+  }
+  if (incoming.apiKey !== undefined && next.apiKey !== incoming.apiKey) {
+    next.apiKey = incoming.apiKey;
+    changed = true;
+  }
+  return changed ? next : undefined;
 }

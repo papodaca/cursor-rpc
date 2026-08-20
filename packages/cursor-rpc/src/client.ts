@@ -33,6 +33,7 @@ export type ClientTools = {
 export type CreateClientOptions = {
   apiKey?: string;
   authToken?: string;
+  credentials?: TokenPair;
   apiEndpoint?: string;
   apiBaseUrl?: string;
   websiteUrl?: string;
@@ -84,6 +85,7 @@ export function createClient(options: CreateClientOptions = {}): CursorRpcClient
     store,
     authToken: options.authToken,
     apiKey: options.apiKey,
+    credentials: options.credentials,
     env,
     fetch: options.fetch,
     signal: options.signal,
@@ -227,10 +229,10 @@ class CursorRpcClientImpl implements CursorRpcClient {
         unaryCall(this.#origin(this.#environment.apiUrl).transport, AiService.method.getUsableModels, {}, { signal: callSignal }),
       getDefaultModelForCli: () =>
         unaryCall(this.#origin(this.#environment.apiUrl).transport, AiService.method.getDefaultModelForCli, {}, { signal: callSignal }),
-      availableModels: () =>
+      availableModels: (signal) =>
         unaryCall(this.#origin(this.#environment.apiUrl).transport, AiService.method.availableModels, {
           useModelParameters: true,
-        }, { signal: callSignal }),
+        }, { signal: combineSignals(callSignal, signal) }),
     };
   }
 
@@ -274,7 +276,7 @@ function hasCredentials(
   store: CredentialStore,
   env: Record<string, string | undefined>,
 ): boolean {
-  if (nonEmpty(options.authToken) || nonEmpty(options.apiKey)) {
+  if (nonEmpty(options.authToken) || nonEmpty(options.apiKey) || nonEmpty(options.credentials?.accessToken)) {
     return true;
   }
   if (nonEmpty(env.CURSOR_AUTH_TOKEN) || nonEmpty(env.CURSOR_API_KEY)) {
@@ -289,6 +291,17 @@ function hasCredentials(
 
 function nonEmpty(value: string | undefined): boolean {
   return value !== undefined && value.trim() !== "";
+}
+
+function combineSignals(...signals: Array<AbortSignal | undefined>): AbortSignal | undefined {
+  const present = signals.filter((value): value is AbortSignal => value !== undefined);
+  if (present.length === 0) {
+    return undefined;
+  }
+  if (present.length === 1) {
+    return present[0];
+  }
+  return AbortSignal.any(present);
 }
 
 function agentToolHeaders(tools: ClientTools | undefined, run: ClientRunOptions): Headers {
