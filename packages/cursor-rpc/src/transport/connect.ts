@@ -1,7 +1,7 @@
 import { createClient, Code, ConnectError, type Client, type Interceptor, type Transport } from "@connectrpc/connect";
 import { createConnectTransport, Http2SessionManager } from "@connectrpc/connect-node";
 import type { DescMessage, DescMethodUnary, DescService, MessageInitShape, MessageShape } from "@bufbuild/protobuf";
-import { CancelledError, CursorRpcError } from "../errors.js";
+import { AuthenticationError, CancelledError, CursorRpcError, PolicyError } from "../errors.js";
 import { createCodecFallbackTransport, createCodecMemory, type CodecMemory } from "./codec.js";
 import { createHeaderInterceptor, type HeaderProviders } from "./headers.js";
 
@@ -67,7 +67,7 @@ export async function unaryCall<I extends DescMessage, O extends DescMessage>(
   transport: Transport,
   method: DescMethodUnary<I, O>,
   input: MessageInitShape<I>,
-  options: { signal?: AbortSignal; headers?: Headers } = {},
+  options: { signal?: AbortSignal; headers?: Headers; timeoutMs?: number } = {},
 ): Promise<MessageShape<O>> {
   try {
     if (options.signal?.aborted) {
@@ -76,7 +76,7 @@ export async function unaryCall<I extends DescMessage, O extends DescMessage>(
     const response = await transport.unary(
       method,
       options.signal,
-      undefined,
+      options.timeoutMs ?? 30_000,
       options.headers,
       input,
     );
@@ -93,6 +93,12 @@ export function mapTransportError(error: unknown): CursorRpcError {
   const connect = ConnectError.from(error);
   if (connect.code === Code.Canceled) {
     return CancelledError.fromAbort(connect);
+  }
+  if (connect.code === Code.Unauthenticated) {
+    return AuthenticationError.from(connect, { code: "unauthenticated" });
+  }
+  if (connect.code === Code.PermissionDenied) {
+    return new PolicyError(connect.message, { cause: connect });
   }
   return CursorRpcError.from(sanitizeError(connect), {
     code: connectCodeName(connect.code),

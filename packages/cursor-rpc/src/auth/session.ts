@@ -91,8 +91,8 @@ export function isAuthFailure(error: unknown, bearerWasSent: boolean): boolean {
   if (error instanceof ConnectError) {
     return error.code === Code.Unauthenticated;
   }
-  if (error instanceof CursorRpcError && error.code === "unauthenticated") {
-    return true;
+  if (error instanceof CursorRpcError) {
+    return error.code === "unauthenticated";
   }
   if (!bearerWasSent) {
     return false;

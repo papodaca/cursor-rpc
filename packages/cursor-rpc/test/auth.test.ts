@@ -1,6 +1,6 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
-import { AuthenticationError, CancelledError, PolicyError } from "../src/errors.ts";
+import { AuthenticationError, CancelledError, CursorRpcError, PolicyError } from "../src/errors.ts";
 import { MemoryCredentialStore } from "../src/credentials.ts";
 import { exchangeApiKey } from "../src/auth/api-key.ts";
 import { createLoginChallenge, pollLogin } from "../src/auth/login.ts";
@@ -134,6 +134,14 @@ describe("auth", () => {
     expect(session.pinned).toBe(false);
   });
 
+  it("does not clear the store for CursorRpcError internal whose message contains 401", () => {
+    const store = new MemoryCredentialStore();
+    const session = new AuthSession({ apiUrl: API, store, authToken: "tok" });
+    expect(session.handleAuthFailure(new CursorRpcError("upstream 401", { code: "internal" }), true)).toBe(false);
+    expect(store.load()?.accessToken).toBe("tok");
+    expect(session.pinned).toBe(false);
+  });
+
   it("omits API key and poll verifier from public error text", async () => {
     const error = await exchangeApiKey(API, "key_live_secret", {
       fetch: async () => {
@@ -142,6 +150,19 @@ describe("auth", () => {
     }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(AuthenticationError);
     expect(String(error)).not.toContain("key_live_secret");
+  });
+
+  it("omits the poll verifier when fetch throws the poll URL", async () => {
+    const challenge = createLoginChallenge({ websiteUrl: "https://cursor.com" });
+    const error = await pollLogin(API, challenge, {
+      fetch: async (input) => {
+        throw new Error(`proxy failed for ${String(input)}`);
+      },
+      sleep: async () => undefined,
+    }).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AuthenticationError);
+    expect(String(error)).not.toContain(challenge.verifier);
+    expect(JSON.stringify((error as AuthenticationError).toJSON())).not.toContain(challenge.verifier);
   });
 
   it("sends /auth/poll with no Authorization header", async () => {

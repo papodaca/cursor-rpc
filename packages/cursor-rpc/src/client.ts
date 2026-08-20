@@ -149,7 +149,11 @@ class CursorRpcClientImpl implements CursorRpcClient {
       assertRunTransport(session.http2);
       const outbound = new AsyncQueue<AgentClientMessage>();
       const headers = agentToolHeaders(this.#options.tools, options);
-      const signal = options.signal ?? this.#options.signal;
+      const runAbort = new AbortController();
+      const signals = [runAbort.signal, options.signal, this.#options.signal].filter(
+        (value): value is AbortSignal => value !== undefined,
+      );
+      const signal = signals.length <= 1 ? signals[0] : AbortSignal.any(signals);
       const inbound = this.#options.openRun
         ? this.#options.openRun(outbound, { signal, headers })
         : this.#agentRun(session, outbound, signal, headers);
@@ -162,12 +166,11 @@ class CursorRpcClientImpl implements CursorRpcClient {
         },
         signal,
         handlers: options.handlers,
-        auth: this.#auth,
         onUnauthenticated: (error) => {
           this.#recordAuthFailure(error);
         },
       });
-      return attachOutbound(handle, outbound);
+      return attachOutbound(handle, outbound, runAbort);
     } catch (error) {
       this.#recordAuthFailure(error);
       throw mapTransportError(error);
@@ -303,9 +306,14 @@ function agentToolHeaders(tools: ClientTools | undefined, run: ClientRunOptions)
   return headers;
 }
 
-function attachOutbound(handle: RunHandle, outbound: AsyncQueue<AgentClientMessage>): RunHandle {
+function attachOutbound(
+  handle: RunHandle,
+  outbound: AsyncQueue<AgentClientMessage>,
+  runAbort?: AbortController,
+): RunHandle {
   const abort = () => {
     handle.abort();
+    runAbort?.abort();
     outbound.close();
   };
   return {
@@ -313,6 +321,7 @@ function attachOutbound(handle: RunHandle, outbound: AsyncQueue<AgentClientMessa
       try {
         return await handle.wait();
       } finally {
+        runAbort?.abort();
         outbound.close();
       }
     },
@@ -322,6 +331,7 @@ function attachOutbound(handle: RunHandle, outbound: AsyncQueue<AgentClientMessa
       try {
         yield* handle;
       } finally {
+        runAbort?.abort();
         outbound.close();
       }
     },

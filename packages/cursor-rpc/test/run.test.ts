@@ -3,7 +3,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
 import { MemoryCredentialStore } from "../src/credentials.ts";
 import { AuthSession } from "../src/auth/session.ts";
-import { CancelledError, StreamError } from "../src/errors.ts";
+import { AuthenticationError, CancelledError, StreamError } from "../src/errors.ts";
 import {
   AgentClientMessageSchema,
   AgentServerMessageSchema,
@@ -81,6 +81,8 @@ describe("run turn", () => {
     inbound.close();
     const result = await handle.wait();
     expect(result.text).toBe("ok");
+    expect(result.usage.inputTokens).toBe(1);
+    expect(result.usage.outputTokens).toBe(2);
     expect(outbound.some((message) => message.message.case === "interactionResponse")).toBe(true);
   });
 
@@ -199,7 +201,6 @@ describe("run turn", () => {
       send: () => undefined,
       heartbeatMs: 60_000,
       stallMs: 20,
-      auth,
     });
     await expect(handle.wait()).rejects.toBeInstanceOf(StreamError);
     await expect(handle.wait()).rejects.toMatchObject({ isRetryable: true, code: "deadline_exceeded" });
@@ -294,10 +295,12 @@ describe("run turn", () => {
       },
       heartbeatMs: 60_000,
       stallMs: 60_000,
-      auth,
+      onUnauthenticated: (error) => {
+        auth.handleAuthFailure(error, true);
+      },
     });
     inbound.close(new ConnectError("expired", Code.Unauthenticated));
-    await expect(handle.wait()).rejects.toBeInstanceOf(ConnectError);
+    await expect(handle.wait()).rejects.toBeInstanceOf(AuthenticationError);
     expect(store.load()).toBeUndefined();
     expect(sends).toBe(1);
   });

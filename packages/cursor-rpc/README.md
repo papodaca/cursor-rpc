@@ -33,10 +33,12 @@ Constructor options override `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`, `CURSOR_API_
 
 ## Public exports
 
-- `createClient` — `models()` and `run()` against the protocol backend
+- `createClient` — `models()`, `run()`, and `close()` against the protocol backend
 - `login` — optional browser-login helper that returns a pollable authorization URL
+- `name` — package identity export (`"cursor-rpc"`)
 - `MemoryCredentialStore` — default in-memory credential store
 - Errors: `CursorRpcError`, `AuthenticationError`, `PolicyError`, `CancelledError`, `TransportUnsupportedError`, `StreamError`
+- Protocol types: `AgentClientMessage`, `InteractionQuery`, `ExecServerMessage`, `ConversationHistory`
 
 ## Notes
 

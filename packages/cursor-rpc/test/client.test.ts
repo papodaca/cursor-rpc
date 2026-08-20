@@ -3,7 +3,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { AuthenticationError } from "../src/errors.ts";
+import { AuthenticationError, TransportUnsupportedError } from "../src/errors.ts";
 import { MemoryCredentialStore } from "../src/credentials.ts";
 import { PrivacyMode, GetUserPrivacyModeResponseSchema } from "../src/generated/aiserver/v1/dashboard_pb.ts";
 import {
@@ -13,8 +13,22 @@ import {
   ModelDetailsSchema,
 } from "../src/generated/aiserver/v1/models_pb.ts";
 import { GetServerConfigResponseSchema, Http2Config } from "../src/generated/aiserver/v1/server_config_pb.ts";
-import { createClient, login } from "../src/index.ts";
+import {
+  AgentServerMessageSchema,
+  InteractionUpdateSchema,
+  TextDeltaUpdateSchema,
+  TurnEndedUpdateSchema,
+} from "../src/generated/agent/v1/agent_pb.ts";
+import {
+  createClient,
+  login,
+  name,
+  type AgentClientMessage,
+  type DispatchHandlers,
+  type InteractionQuery,
+} from "../src/index.ts";
 import type { BootstrapClients } from "../src/session/bootstrap.ts";
+import type { AgentServerMessage } from "../src/generated/agent/v1/agent_pb.ts";
 
 const MODEL = create(ModelDetailsSchema, { modelId: "composer-2.5", displayName: "Composer" });
 
@@ -22,6 +36,34 @@ function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
+  });
+}
+
+function textDelta(text: string): AgentServerMessage {
+  return create(AgentServerMessageSchema, {
+    message: {
+      case: "interactionUpdate",
+      value: create(InteractionUpdateSchema, {
+        message: {
+          case: "textDelta",
+          value: create(TextDeltaUpdateSchema, { text }),
+        },
+      }),
+    },
+  });
+}
+
+function turnEnded(): AgentServerMessage {
+  return create(AgentServerMessageSchema, {
+    message: {
+      case: "interactionUpdate",
+      value: create(InteractionUpdateSchema, {
+        message: {
+          case: "turnEnded",
+          value: create(TurnEndedUpdateSchema, { inputTokens: 1, outputTokens: 2 }),
+        },
+      }),
+    },
   });
 }
 
@@ -100,11 +142,53 @@ describe("createClient", () => {
     expect(first).toMatch(/not `@cursor\/sdk`/);
     expect(first.toLowerCase()).toContain("not a local agent runtime");
   });
+
+  it("run via openRun yields text_delta and completes wait", async () => {
+    const client = createClient({
+      apiKey: "key_live_test",
+      env: {},
+      fetch: async () => jsonResponse(200, { accessToken: "tok", refreshToken: "ref" }),
+      bootstrapClients: bootstrapClients(),
+      openRun: async function* () {
+        yield textDelta("hello");
+        yield turnEnded();
+      },
+    });
+    const run = await client.run({ prompt: "Say hello" });
+    const types: string[] = [];
+    for await (const event of run) {
+      types.push(event.type);
+    }
+    const result = await run.wait();
+    expect(types).toContain("text_delta");
+    expect(types).toContain("turn_ended");
+    expect(result.text).toBe("hello");
+    expect(result.usage.inputTokens).toBe(1);
+    expect(result.usage.outputTokens).toBe(2);
+    client.close();
+  });
+
+  it("throws TransportUnsupportedError when HTTP/1.1 is forced", async () => {
+    const client = createClient({
+      apiKey: "key_live_test",
+      env: {},
+      fetch: async () => jsonResponse(200, { accessToken: "tok", refreshToken: "ref" }),
+      bootstrapClients: bootstrapClients({
+        getServerConfig: async () =>
+          create(GetServerConfigResponseSchema, {
+            http2Config: Http2Config.FORCE_ALL_DISABLED,
+          }),
+      }),
+    });
+    await client.models();
+    await expect(client.run({ prompt: "hi" })).rejects.toBeInstanceOf(TransportUnsupportedError);
+    client.close();
+  });
 });
 
 describe("README example", () => {
   it("compiles against public types", () => {
-    async function readmeAskExample(apiKey: string): Promise<string> {
+    const readmeAskExample: (apiKey: string) => Promise<string> = async (apiKey) => {
       const client = createClient({ apiKey, env: { CURSOR_API_KEY: apiKey } });
       const models = await client.models();
       const run = await client.run({ prompt: "Say hello" });
@@ -115,8 +199,13 @@ describe("README example", () => {
       }
       const result = await run.wait();
       return `${models.models.length}:${result.text}`;
-    }
+    };
+    const handlers: DispatchHandlers = {
+      onInteraction: (_query: InteractionQuery): AgentClientMessage | undefined => undefined,
+    };
+    expect(name).toBe("cursor-rpc");
     expect(typeof readmeAskExample).toBe("function");
     expect(typeof login).toBe("function");
+    expect(typeof handlers.onInteraction).toBe("function");
   });
 });

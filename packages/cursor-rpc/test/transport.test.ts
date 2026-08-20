@@ -52,6 +52,31 @@ describe("codec fallback", () => {
     expect(message.http2Config).toBe(Http2Config.FORCE_ALL_ENABLED);
   });
 
+  it("uses binary only for a later unary after a 415", async () => {
+    const calls: string[] = [];
+    const json = fakeUnaryTransport(async () => {
+      calls.push("json");
+      throw httpError(415);
+    });
+    const binary = fakeUnaryTransport(async (method) => {
+      calls.push("binary");
+      return {
+        stream: false,
+        service: ServerConfigService,
+        method,
+        header: new Headers(),
+        trailer: new Headers(),
+        message: create(GetServerConfigResponseSchema, { http2Config: Http2Config.FORCE_ALL_ENABLED }),
+      } as UnaryResponse;
+    });
+    const memory = createCodecMemory();
+    const transport = createCodecFallbackTransport(json, binary, memory);
+    await unaryCall(transport, ServerConfigService.method.getServerConfig, {});
+    await unaryCall(transport, ServerConfigService.method.getServerConfig, {});
+    expect(calls).toEqual(["json", "binary", "binary"]);
+    expect(memory.unary).toBe("binary");
+  });
+
   it("does not retry HTTP 401 as binary", async () => {
     const calls: string[] = [];
     const json = fakeUnaryTransport(async () => {
@@ -114,6 +139,58 @@ describe("codec fallback", () => {
       /* drain */
     }
     expect(events).toEqual(["json-open", "binary-open", "binary-yield"]);
+  });
+
+  it("replays outbound frames consumed by a JSON streaming 415 onto binary", async () => {
+    const jsonSeen: number[] = [];
+    const binarySeen: number[] = [];
+    const json: Transport = {
+      unary: async () => {
+        throw new Error("unary not used");
+      },
+      stream: async (_method, _signal, _timeout, _header, input) => {
+        for await (const message of input as AsyncIterable<{ n: number }>) {
+          jsonSeen.push(message.n);
+        }
+        throw httpError(415);
+      },
+    };
+    const binary: Transport = {
+      unary: async () => {
+        throw new Error("unary not used");
+      },
+      stream: async (method, _signal, _timeout, _header, input) => {
+        for await (const message of input as AsyncIterable<{ n: number }>) {
+          binarySeen.push(message.n);
+        }
+        return {
+          stream: true,
+          service: AgentService,
+          method,
+          header: new Headers(),
+          trailer: new Headers(),
+          message: (async function* () {})(),
+        } as StreamResponse;
+      },
+    };
+    const memory = createCodecMemory();
+    const transport = createCodecFallbackTransport(json, binary, memory);
+    const response = await transport.stream(
+      AgentService.method.run,
+      undefined,
+      undefined,
+      undefined,
+      (async function* () {
+        yield { n: 1 };
+        yield { n: 2 };
+      })(),
+    );
+    expect(jsonSeen).toEqual([1, 2]);
+    expect(binarySeen).toEqual([1, 2]);
+    expect(memory.bidi).toBe("binary");
+    for await (const _ of response.message) {
+      /* drain */
+    }
   });
 });
 

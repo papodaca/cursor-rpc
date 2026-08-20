@@ -1,7 +1,8 @@
 import { create } from "@bufbuild/protobuf";
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { CancelledError, StreamError } from "../errors.js";
+import { AuthenticationError, CancelledError, StreamError } from "../errors.js";
+import { mapTransportError } from "../transport/connect.js";
 import {
   AgentClientMessageSchema,
   AgentMode,
@@ -17,7 +18,6 @@ import {
   type AgentServerMessage,
   type ConversationHistory,
 } from "../generated/agent/v1/agent_pb.js";
-import type { AuthSession } from "../auth/session.js";
 import { dispatchServerMessage, type DispatchHandlers, type InFlightExec } from "./dispatch.js";
 import { startHeartbeat, startStallTimer } from "./heartbeat.js";
 import { AsyncQueue } from "./queue.js";
@@ -35,7 +35,6 @@ export type RunOptions = {
   handlers?: DispatchHandlers;
   heartbeatMs?: number;
   stallMs?: number;
-  auth?: AuthSession;
   onUnauthenticated?: (error: unknown) => void;
 };
 
@@ -93,6 +92,7 @@ export function runTurn(options: RunOptions): RunHandle {
   const events = new AsyncQueue<RunEvent>();
   const collected: RunEvent[] = [];
   const inFlight = new Map<number, InFlightExec>();
+  const pendingExecs: Array<Promise<void>> = [];
   const abort = new AbortController();
   let heartbeat: { stop: () => void } | undefined;
   let stall: { touch: () => void; stop: () => void } | undefined;
@@ -175,6 +175,7 @@ export function runTurn(options: RunOptions): RunHandle {
           collected.push(event);
           events.push(event);
           if (event.type === "turn_ended") {
+            await Promise.all(pendingExecs);
             return finish({
               text: textFromEvents(collected),
               usage: event.usage,
@@ -187,15 +188,17 @@ export function runTurn(options: RunOptions): RunHandle {
           if (!inFlight.has(exec.id)) {
             inFlight.set(exec.id, { abort: new AbortController() });
           }
-          void dispatchServerMessage(next.value, {
-            handlers: options.handlers,
-            inFlight,
-            signal: abort.signal,
-          }).then(async (reply) => {
-            if (reply !== undefined) {
-              await options.send(reply);
-            }
-          });
+          pendingExecs.push(
+            dispatchServerMessage(next.value, {
+              handlers: options.handlers,
+              inFlight,
+              signal: abort.signal,
+            }).then(async (reply) => {
+              if (reply !== undefined) {
+                await options.send(reply);
+              }
+            }),
+          );
           continue;
         }
         const reply = await dispatchServerMessage(next.value, {
@@ -218,10 +221,10 @@ export function runTurn(options: RunOptions): RunHandle {
       }
       const connect = ConnectError.from(error);
       if (connect.code === Code.Unauthenticated) {
+        const mapped = AuthenticationError.from(connect, { code: "unauthenticated" });
         options.onUnauthenticated?.(connect);
-        options.auth?.handleAuthFailure(connect, true);
-        fail(connect);
-        throw connect;
+        fail(mapped);
+        throw mapped;
       }
       if (abort.signal.reason instanceof StreamError) {
         fail(abort.signal.reason);
@@ -232,9 +235,11 @@ export function runTurn(options: RunOptions): RunHandle {
         fail(cancelled);
         throw cancelled;
       }
-      fail(error);
-      throw error;
+      const mapped = error instanceof StreamError ? error : mapTransportError(error);
+      fail(mapped);
+      throw mapped;
     } finally {
+      await Promise.allSettled(pendingExecs);
       options.signal?.removeEventListener("abort", onCallerAbort);
       stopTimers();
     }

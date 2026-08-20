@@ -36,13 +36,19 @@ export function createCodecFallbackTransport(
       );
     },
     async stream(method, signal, timeoutMs, header, input, contextValues) {
-      return await invokeWithFallback(
-        "bidi",
-        memory,
-        jsonTransport,
-        binaryTransport,
-        (transport) => transport.stream(method, signal, timeoutMs, header, input, contextValues),
-      );
+      if (memory.bidi === "binary") {
+        return await binaryTransport.stream(method, signal, timeoutMs, header, input, contextValues);
+      }
+      const replay = createReplaySource(input);
+      try {
+        return await jsonTransport.stream(method, signal, timeoutMs, header, replay.first, contextValues);
+      } catch (error) {
+        if (!isUnsupportedMediaType(error)) {
+          throw error;
+        }
+        memory.bidi = "binary";
+        return await binaryTransport.stream(method, signal, timeoutMs, header, replay.second, contextValues);
+      }
     },
   };
 }
@@ -64,4 +70,47 @@ async function invokeWithFallback<T>(
     memory[kind] = "binary";
     return await invoke(binaryTransport);
   }
+}
+
+function createReplaySource<T>(input: AsyncIterable<T>): { first: AsyncIterable<T>; second: AsyncIterable<T> } {
+  const recorded: T[] = [];
+  const iterator = input[Symbol.asyncIterator]();
+  let sourceDone = false;
+  const pull = async (): Promise<IteratorResult<T>> => {
+    const next = await iterator.next();
+    if (next.done === true) {
+      sourceDone = true;
+      return next;
+    }
+    recorded.push(next.value);
+    return next;
+  };
+  return {
+    first: {
+      async *[Symbol.asyncIterator]() {
+        while (true) {
+          const next = await pull();
+          if (next.done === true) {
+            return;
+          }
+          yield next.value;
+        }
+      },
+    },
+    second: {
+      async *[Symbol.asyncIterator]() {
+        yield* recorded;
+        if (sourceDone) {
+          return;
+        }
+        while (true) {
+          const next = await pull();
+          if (next.done === true) {
+            return;
+          }
+          yield next.value;
+        }
+      },
+    },
+  };
 }

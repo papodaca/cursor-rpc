@@ -5,7 +5,7 @@ import {
   ExecServerMessageSchema,
   InteractionQuerySchema,
 } from "../src/generated/agent/v1/agent_pb.ts";
-import { defaultExecReply, dispatchServerMessage, replyRejected } from "../src/run/dispatch.ts";
+import { defaultExecReply, dispatchServerMessage } from "../src/run/dispatch.ts";
 
 describe("run dispatcher", () => {
   it("rejects an unknown interaction_query with the echoed id", async () => {
@@ -80,6 +80,11 @@ describe("run dispatcher", () => {
       },
     });
     expect(reply?.message.case).toBe("interactionResponse");
-    expect(replyRejected(2, "User Rejected", "webSearchRequestQuery").message.case).toBe("interactionResponse");
+    if (reply?.message.case !== "interactionResponse") {
+      throw new Error("expected interactionResponse");
+    }
+    expect(reply.message.value.id).toBe(2);
+    expect(reply.message.value.result.case).toBe("webSearchRequestResponse");
+    expect(JSON.stringify(reply)).toMatch(/rejected/i);
   });
 });

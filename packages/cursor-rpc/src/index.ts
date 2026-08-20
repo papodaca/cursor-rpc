@@ -25,4 +25,4 @@ export type { RunEvent, RunResult, UsageCounts } from "./run/events.js";
 export type { RunHandle } from "./run/run.js";
 export type { DispatchHandlers } from "./run/dispatch.js";
 export type { ModelCatalogue } from "./session/models.js";
-export type { ConversationHistory } from "./generated/agent/v1/agent_pb.js";
+export type { ConversationHistory, AgentClientMessage, InteractionQuery, ExecServerMessage } from "./generated/agent/v1/agent_pb.js";
