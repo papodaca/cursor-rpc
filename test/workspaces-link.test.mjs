@@ -8,14 +8,27 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const serverDir = path.join(root, "apps", "cursor-rpc-openai-server");
 const libDir = path.join(root, "packages", "cursor-rpc");
+const piDir = path.join(root, "packages", "cursor-rpc-pi");
+const toolsDir = path.join(root, "packages", "cursor-rpc-pi-tools");
 const distDir = path.join(libDir, "dist");
 const linkPath = path.join(root, "node_modules", "cursor-rpc");
+const toolsLinkPath = path.join(root, "node_modules", "cursor-rpc-pi-tools");
+
+function importFrom(cwd, source) {
+  return spawnSync(process.execPath, ["--input-type=module", "-e", source], {
+    cwd,
+    encoding: "utf8",
+  });
+}
 
 function importCursorRpcFromServer() {
-  return spawnSync(
-    process.execPath,
-    ["--input-type=module", "-e", "import { name } from 'cursor-rpc'; console.log(name);"],
-    { cwd: serverDir, encoding: "utf8" },
+  return importFrom(serverDir, "import { name } from 'cursor-rpc'; console.log(name);");
+}
+
+function importCreateWebClientFromTools() {
+  return importFrom(
+    toolsDir,
+    "import { createWebClient } from 'cursor-rpc'; console.log(typeof createWebClient);",
   );
 }
 
@@ -25,17 +38,29 @@ describe("workspace link", () => {
     assert.equal(realpathSync(linkPath), realpathSync(libDir));
   });
 
+  it("symlinks the tools workspace", () => {
+    assert.equal(lstatSync(toolsLinkPath).isSymbolicLink(), true);
+    assert.equal(realpathSync(toolsLinkPath), realpathSync(toolsDir));
+  });
+
   it("loads the stub export from the server workspace after library build", () => {
     const result = importCursorRpcFromServer();
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), "cursor-rpc");
   });
 
+  it("imports createWebClient from the tools workspace after library build", () => {
+    const result = importCreateWebClientFromTools();
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "function");
+  });
+
   it("does not map cursor-rpc to src via tsconfig paths", () => {
     const configs = [
       path.join(root, "tsconfig.base.json"),
       path.join(libDir, "tsconfig.json"),
-      path.join(root, "packages", "cursor-rpc-pi", "tsconfig.json"),
+      path.join(piDir, "tsconfig.json"),
+      path.join(toolsDir, "tsconfig.json"),
       path.join(serverDir, "tsconfig.json"),
     ];
     for (const file of configs) {
@@ -44,15 +69,31 @@ describe("workspace link", () => {
     }
   });
 
+  it("keeps Pi package identity on tools and not on the provider stub", () => {
+    const tools = JSON.parse(readFileSync(path.join(toolsDir, "package.json"), "utf8"));
+    const provider = JSON.parse(readFileSync(path.join(piDir, "package.json"), "utf8"));
+    assert.equal(tools.keywords?.includes("pi-package"), true);
+    assert.deepEqual(tools.pi?.extensions, ["./src/index.ts"]);
+    assert.match(tools.dependencies?.["cursor-rpc"] ?? "", /^\^1\.0\.0$/);
+    assert.equal(provider.pi, undefined);
+    assert.equal(provider.keywords?.includes("pi-package") ?? false, false);
+  });
+
   it("fails to import when dist is missing, then succeeds after restore", () => {
     assert.equal(existsSync(distDir), true);
     const parked = `${distDir}.parked`;
     renameSync(distDir, parked);
     try {
-      const missing = importCursorRpcFromServer();
-      assert.notEqual(missing.status, 0);
+      const missingServer = importCursorRpcFromServer();
+      assert.notEqual(missingServer.status, 0);
       assert.match(
-        missing.stderr,
+        missingServer.stderr,
+        /ERR_MODULE_NOT_FOUND|Cannot find module|Cannot find package/,
+      );
+      const missingTools = importCreateWebClientFromTools();
+      assert.notEqual(missingTools.status, 0);
+      assert.match(
+        missingTools.stderr,
         /ERR_MODULE_NOT_FOUND|Cannot find module|Cannot find package/,
       );
     } finally {
@@ -60,8 +101,11 @@ describe("workspace link", () => {
         renameSync(parked, distDir);
       }
     }
-    const restored = importCursorRpcFromServer();
-    assert.equal(restored.status, 0, restored.stderr);
-    assert.equal(restored.stdout.trim(), "cursor-rpc");
+    const restoredServer = importCursorRpcFromServer();
+    assert.equal(restoredServer.status, 0, restoredServer.stderr);
+    assert.equal(restoredServer.stdout.trim(), "cursor-rpc");
+    const restoredTools = importCreateWebClientFromTools();
+    assert.equal(restoredTools.status, 0, restoredTools.stderr);
+    assert.equal(restoredTools.stdout.trim(), "function");
   });
 });
