@@ -18,6 +18,15 @@ export {
   type CursorRpcClient,
 } from "./client.js";
 
+export {
+  createWebClient,
+  type CreateWebClientOptions,
+  type WebClient,
+  type WebClientFetchOutcome,
+  type WebClientSearchDocument,
+  type WebClientSearchOutcome,
+} from "./web/client.js";
+
 export { createLoginChallenge, pollLogin, type LoginChallenge } from "./auth/login.js";
 export type { TokenPair } from "./auth/api-key.js";
 export { MemoryCredentialStore, type CredentialStore, type StoredCredentials } from "./credentials.js";
