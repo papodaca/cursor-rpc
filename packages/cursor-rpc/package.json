@@ -6,6 +6,12 @@
   "engines": {
     "node": ">=22"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit"
