@@ -1,9 +1,9 @@
-import { ClientEpoch, clientForStream, cursorAuth } from "./auth.js";
+import { ClientEpoch, clientForStream, cursorAuth, isOauthCredential } from "./auth.js";
 import { fetchCursorModels } from "./models.js";
 import { streamCursor } from "./stream.js";
-import { cursorApiStreams, stubStream } from "./stream-stub.js";
-import { CURSOR_API, PROVIDER_ID } from "./constants.js";
-import type { CreateProviderInput, FetchModelsContext, PiModel, StreamFn } from "./types.js";
+import { cursorApiStreams } from "./stream-stub.js";
+import { PROVIDER_ID } from "./constants.js";
+import type { CreateProviderInput, FetchModelsContext, PiModel, StoredCredential, StreamFn } from "./types.js";
 
 const epoch = new ClientEpoch();
 
@@ -23,12 +23,7 @@ export function cursorProviderInput(options: {
     fetchModels:
       options.fetchModels ??
       (async (context) => {
-        const apiKey =
-          context.credential !== undefined && "access" in context.credential
-            ? context.credential.access
-            : context.credential !== undefined && "key" in context.credential
-              ? context.credential.key
-              : undefined;
+        const apiKey = secretFromCredential(context.credential);
         const client = clientForStream(activeEpoch, { apiKey, signal: context.signal });
         if (client === undefined) {
           return [];
@@ -44,12 +39,12 @@ export function cursorProviderInput(options: {
   };
 }
 
-export function withCursorApi(model: Omit<PiModel, "provider" | "api">): PiModel {
-  return {
-    ...model,
-    provider: PROVIDER_ID,
-    api: CURSOR_API,
-  };
+function secretFromCredential(credential: StoredCredential): string | undefined {
+  if (isOauthCredential(credential)) {
+    return credential.access;
+  }
+  if (credential !== undefined && "key" in credential) {
+    return credential.key;
+  }
+  return undefined;
 }
-
-export { stubStream };
