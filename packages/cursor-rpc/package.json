@@ -21,8 +21,13 @@
     "test": "vitest run",
     "generate": "buf generate"
   },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.10.0"
+  },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.2",
+    "@bufbuild/buf": "^1.57.2",
+    "@bufbuild/protoc-gen-es": "^2.10.0",
     "publint": "^0.3.12",
     "vitest": "^3.2.4"
   }

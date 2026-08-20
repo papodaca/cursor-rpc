@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package aiserver.v1;
+
+message GetUserPrivacyModeRequest {
+  PrivacyMode inferred_privacy_mode = 1;
+  optional int32 team_id = 2;
+}
+
+message GetUserPrivacyModeResponse {
+  PrivacyMode privacy_mode = 1;
+  int32 hours_remaining_in_grace_period = 2;
+  bool is_enforced_by_team = 3;
+  bool is_not_migrated_to_server_source_of_truth = 4;
+  bool partner_data_share = 5;
+}
+
+enum PrivacyMode {
+  PRIVACY_MODE_UNSPECIFIED = 0;
+  PRIVACY_MODE_NO_STORAGE = 1;
+  PRIVACY_MODE_NO_TRAINING = 2;
+  PRIVACY_MODE_USAGE_DATA_TRAINING_ALLOWED = 3;
+  PRIVACY_MODE_USAGE_CODEBASE_TRAINING_ALLOWED = 4;
+}
+
+message GetMeRequest {}
+
+message GetMeResponse {
+  string auth_id = 1;
+  int32 user_id = 2;
+  optional string email = 3;
+  optional string first_name = 4;
+  optional string last_name = 5;
+  optional string workos_id = 6;
+  optional int32 team_id = 7;
+  optional string created_at = 8;
+  optional bool is_enterprise_user = 9;
+  optional string team_name = 10;
+}
+
+service DashboardService {
+  rpc GetUserPrivacyMode(GetUserPrivacyModeRequest) returns (GetUserPrivacyModeResponse);
+  rpc GetMe(GetMeRequest) returns (GetMeResponse);
+}

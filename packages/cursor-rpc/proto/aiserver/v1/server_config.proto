@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package aiserver.v1;
+
+message GetServerConfigRequest {}
+
+message GetServerConfigResponse {
+  bool is_dev_do_not_use_for_secret_things_because_can_be_spoofed_by_users = 2;
+  string config_version = 6;
+  Http2Config http2_config = 7;
+  ClientVersionStatus client_version_status = 23;
+  // Field number is not in rpc_spec.md; JSON name is authoritative for the JSON codec.
+  AgentUrlConfig agent_url_config = 24;
+}
+
+message AgentUrlConfig {
+  string agent_url = 1;
+  string agentn_url = 2;
+}
+
+message ClientVersionStatus {
+  string status = 1;
+}
+
+enum Http2Config {
+  HTTP2_CONFIG_UNSPECIFIED = 0;
+  HTTP2_CONFIG_FORCE_ALL_DISABLED = 1;
+  HTTP2_CONFIG_FORCE_ALL_ENABLED = 2;
+  HTTP2_CONFIG_FORCE_BIDI_DISABLED = 3;
+  HTTP2_CONFIG_FORCE_BIDI_ENABLED = 4;
+}
+
+service ServerConfigService {
+  rpc GetServerConfig(GetServerConfigRequest) returns (GetServerConfigResponse);
+}
