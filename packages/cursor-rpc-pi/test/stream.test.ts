@@ -35,6 +35,38 @@ describe("streamSimple mapping", () => {
     expect(done?.type === "done" ? done.reason : undefined).toBe("stop");
   });
 
+  it("thinking deltas map to Pi thinking blocks without leaking into text", async () => {
+    withKey();
+    const { epoch } = fakeEpoch({
+      events: [
+        { type: "thinking_delta", text: "plan" },
+        { type: "text_delta", text: "hello" },
+        { type: "turn_ended", usage: {} },
+      ],
+    });
+    const stream = asTestStream(
+      streamCursor(epoch, TEST_MODEL, { messages: [{ role: "user", content: "hi" }] }),
+    );
+    await waitForStream(stream);
+    const done = stream.events.find((event) => event.type === "done");
+    const thinking =
+      done?.type === "done"
+        ? done.message.content
+            .filter((block) => block.type === "thinking")
+            .map((block) => (block.type === "thinking" ? block.thinking : ""))
+            .join("")
+        : "";
+    const text =
+      done?.type === "done"
+        ? done.message.content
+            .filter((block) => block.type === "text")
+            .map((block) => (block.type === "text" ? block.text : ""))
+            .join("")
+        : "";
+    expect(thinking).toBe("plan");
+    expect(text).toBe("hello");
+  });
+
   it("advertised mcp_args yields matching toolCall, toolUse, MCP reply, and cancel", async () => {
     withKey();
     const { epoch, runs } = fakeEpoch({
@@ -63,9 +95,17 @@ describe("streamSimple mapping", () => {
     const done = stream.events.find((event) => event.type === "done");
     expect(done?.type === "done" ? done.reason : undefined).toBe("toolUse");
     const tool = done?.type === "done" ? done.message.content.find((block) => block.type === "toolCall") : undefined;
-    expect(tool).toMatchObject({ type: "toolCall", name: "read_file", arguments: { path: "README.md" } });
-    expect(runs[0]?.replies).toHaveLength(1);
-    expect(runs[0]?.replies[0]).toBeDefined();
+    expect(tool).toMatchObject({ type: "toolCall", id: "call-1", name: "read_file", arguments: { path: "README.md" } });
+    expect(stream.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["toolcall_start", "toolcall_delta", "toolcall_end", "done"]),
+    );
+    const reply = runs[0]?.replies[0] as {
+      message?: { case?: string; value?: { id?: number; execId?: string; message?: { case?: string } } };
+    };
+    expect(reply.message?.case).toBe("execClientMessage");
+    expect(reply.message?.value?.id).toBe(1);
+    expect(reply.message?.value?.execId).toBe("exec-1");
+    expect(reply.message?.value?.message?.case).toBe("mcpResult");
     expect(runs[0]?.abortCount).toBeGreaterThan(0);
     expect(runs[0]?.options.mode).toBe("agent");
     expect(runs[0]?.options.mcpTools?.map((tool) => tool.name)).toEqual(["read_file"]);
@@ -117,10 +157,16 @@ describe("streamSimple mapping", () => {
     expect(runs[1]?.options.conversationId).not.toBe(runs[0]?.options.conversationId);
     expect(runs[1]?.options.runId).not.toBe(runs[0]?.options.runId);
     const history = runs[1]?.options.conversationHistory;
-    expect(history?.messages.length).toBeGreaterThan(0);
+    const toolMessage = history?.messages.find((message) => message.message.case === "tool");
+    expect(toolMessage?.message.case).toBe("tool");
+    if (toolMessage?.message.case === "tool") {
+      expect(toolMessage.message.value.toolCallId).toBe("call-1");
+      expect(toolMessage.message.value.toolName).toBe("read_file");
+    }
     const encoded = JSON.stringify(history);
     expect(encoded).toContain("file body");
     expect(encoded).not.toContain("checkpoint");
+    expect(encoded).not.toContain("conversationStateBlob");
     expect(encoded).not.toMatch(/fileContents":\{"[^"]/);
     expect(runs[1]?.options.customSystemPrompt).toBe("be brief");
   });
@@ -159,6 +205,7 @@ describe("streamSimple mapping", () => {
     const calls =
       done?.type === "done" ? done.message.content.filter((block) => block.type === "toolCall") : [];
     expect(calls.map((block) => (block.type === "toolCall" ? block.name : undefined))).toEqual(["read_file", "grep"]);
+    expect(runs[0]?.replies).toHaveLength(2);
     expect(runs[0]?.abortCount).toBeGreaterThan(0);
   });
 
@@ -184,8 +231,10 @@ describe("streamSimple mapping", () => {
     );
     await waitForStream(stream);
     const done = stream.events.find((event) => event.type === "done");
-    expect(done?.type === "done" ? done.reason : undefined).not.toBe("toolUse");
+    expect(done?.type === "done" ? done.reason : undefined).toBe("stop");
     expect(done?.type === "done" ? done.message.content.filter((block) => block.type === "toolCall") : []).toEqual([]);
+    const reply = runs[0]?.replies[0] as { message?: { value?: { message?: { case?: string } } } };
+    expect(reply.message?.value?.message?.case).toBe("mcpResult");
     expect(runs[0]?.replies).toHaveLength(1);
     expect(runs[0]?.abortCount).toBeGreaterThan(0);
   });

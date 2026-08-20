@@ -1,19 +1,31 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import * as cursorRpc from "cursor-rpc";
 import loadExtension from "../src/index.ts";
 import { CURSOR_API, PROVIDER_ID } from "../src/constants.ts";
+import { overflowHandler } from "../src/overflow.ts";
 import { cursorProviderInput } from "../src/provider.ts";
 import type { CreateProviderInput } from "../src/types.ts";
 
+vi.mock("cursor-rpc", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("cursor-rpc")>();
+  return {
+    ...actual,
+    createClient: vi.fn((options: Parameters<typeof actual.createClient>[0]) => actual.createClient(options)),
+  };
+});
+
 describe("Pi package registration", () => {
-  it("loading the factory registers provider id cursor-rpc with empty models", async () => {
+  it("loading the factory registers provider id cursor-rpc with empty models and overflow handler", async () => {
     const registered: CreateProviderInput[] = [];
+    const hooks: Array<[string, unknown]> = [];
     await loadExtension({
       registerProvider(provider) {
         registered.push(provider as CreateProviderInput);
       },
-      on() {
+      on(event, handler) {
+        hooks.push([event, handler]);
         return undefined;
       },
     });
@@ -21,13 +33,11 @@ describe("Pi package registration", () => {
     expect(registered[0]?.id).toBe(PROVIDER_ID);
     expect(registered[0]?.models).toEqual([]);
     expect(registered[0]?.api[CURSOR_API]?.streamSimple).toBeTypeOf("function");
+    expect(hooks).toEqual([["message_end", overflowHandler]]);
   });
 
-  it("factory promise resolves without calling createClient.models", async () => {
-    const models = vi.fn();
-    vi.doMock("cursor-rpc", () => ({
-      createClient: () => ({ models, run: vi.fn(), close: vi.fn() }),
-    }));
+  it("factory promise resolves without calling createClient", async () => {
+    vi.mocked(cursorRpc.createClient).mockClear();
     await loadExtension({
       registerProvider() {
         return undefined;
@@ -36,7 +46,7 @@ describe("Pi package registration", () => {
         return undefined;
       },
     });
-    expect(models).not.toHaveBeenCalled();
+    expect(cursorRpc.createClient).not.toHaveBeenCalled();
   });
 
   it("provider api on registered models is cursor-connectrpc, not a KnownApi", () => {
