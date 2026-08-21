@@ -6,9 +6,7 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "keywords": [
-    "pi-package"
-  ],
+  "keywords": [],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -19,11 +17,6 @@
     "dist",
     "README.md"
   ],
-  "pi": {
-    "extensions": [
-      "./dist/index.js"
-    ]
-  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",

@@ -19,6 +19,12 @@ export {
 } from "./client.js";
 
 export {
+  resolveEnvironment,
+  type ResolvedEnvironment,
+  type ResolveEnvironmentOptions,
+} from "./env.js";
+
+export {
   createWebClient,
   type CreateWebClientOptions,
   type WebClient,

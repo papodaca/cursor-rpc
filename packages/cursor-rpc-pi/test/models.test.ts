@@ -17,52 +17,67 @@ afterEach(() => {
 
 describe("model catalogue", () => {
   it("two usable models become two Pi models with the custom api id", () => {
-    const models = toPiModels({
-      models: [
-        { modelId: "composer-2.5", displayName: "Composer" },
-        { modelId: "gpt-5", displayName: "GPT-5" },
-      ],
-    });
+    const models = toPiModels(
+      {
+        models: [
+          { modelId: "composer-2.5", displayName: "Composer" },
+          { modelId: "gpt-5", displayName: "GPT-5" },
+        ],
+      },
+      "https://api2.cursor.sh",
+    );
     expect(models).toHaveLength(2);
     expect(models[0]).toMatchObject({
       id: "composer-2.5",
       provider: PROVIDER_ID,
       api: CURSOR_API,
+      baseUrl: "https://api2.cursor.sh",
       input: ["text"],
     });
     expect(models[1]?.id).toBe("gpt-5");
   });
 
   it("empty usable list returns []", () => {
-    expect(toPiModels({ models: [] })).toEqual([]);
+    expect(toPiModels({ models: [] }, "https://api2.cursor.sh")).toEqual([]);
   });
 
   it("omits Auto and default catalogue ids", () => {
     expect(
-      toPiModels({
-        models: [
-          { modelId: "auto", displayName: "Auto" },
-          { modelId: "default", displayName: "Default" },
-          { modelId: "gpt-5", displayName: "GPT-5" },
-        ],
-      }).map((model) => model.id),
+      toPiModels(
+        {
+          models: [
+            { modelId: "auto", displayName: "Auto" },
+            { modelId: "default", displayName: "Default" },
+            { modelId: "gpt-5", displayName: "GPT-5" },
+          ],
+        },
+        "https://api2.cursor.sh",
+      ).map((model) => model.id),
     ).toEqual(["gpt-5"]);
   });
 
   it("no credentials / auth errors return [] without throwing", async () => {
     await expect(
-      fetchCursorModels(async () => {
-        throw new AuthenticationError("authentication required");
-      }),
+      fetchCursorModels(
+        async () => {
+          throw new AuthenticationError("authentication required");
+        },
+        undefined,
+        "https://api2.cursor.sh",
+      ),
     ).resolves.toEqual([]);
   });
 
   it("aborted signal returns [] without hanging", async () => {
     const signal = AbortSignal.abort();
     await expect(
-      fetchCursorModels(async () => {
-        throw new Error("network");
-      }, signal),
+      fetchCursorModels(
+        async () => {
+          throw new Error("network");
+        },
+        signal,
+        "https://api2.cursor.sh",
+      ),
     ).resolves.toEqual([]);
   });
 

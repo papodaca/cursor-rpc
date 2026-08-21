@@ -11,7 +11,7 @@ export type UsableModel = {
   thinkingDetails?: unknown;
 };
 
-export function toPiModels(catalogue: { models: UsableModel[] } | ModelCatalogue): PiModel[] {
+export function toPiModels(catalogue: { models: UsableModel[] } | ModelCatalogue, baseUrl: string): PiModel[] {
   return catalogue.models
     .filter((model) => {
       const id = model.modelId.toLowerCase();
@@ -22,6 +22,7 @@ export function toPiModels(catalogue: { models: UsableModel[] } | ModelCatalogue
       name: model.displayName.length > 0 ? model.displayName : model.modelId,
       provider: PROVIDER_ID,
       api: CURSOR_API,
+      baseUrl,
       reasoning: model.thinkingDetails !== undefined,
       input: ["text"] as Array<"text" | "image">,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -32,13 +33,14 @@ export function toPiModels(catalogue: { models: UsableModel[] } | ModelCatalogue
 
 export async function fetchCursorModels(
   models: (signal?: AbortSignal) => Promise<ModelCatalogue>,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  baseUrl: string,
 ): Promise<PiModel[]> {
   if (signal?.aborted) {
     return [];
   }
   try {
-    return toPiModels(await models(signal));
+    return toPiModels(await models(signal), baseUrl);
   } catch (error) {
     if (signal?.aborted) {
       return [];

@@ -44,6 +44,7 @@ export type PiModel = {
   name: string;
   provider: string;
   api: string;
+  baseUrl: string;
   reasoning: boolean;
   input: Array<"text" | "image">;
   cost: { input: number; output: number; cacheRead: number; cacheWrite: number };

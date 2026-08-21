@@ -1,4 +1,5 @@
-import { ClientEpoch, clientForStream, cursorAuth, dropAfterAuthError, isOauthCredential } from "./auth.js";
+import { resolveEnvironment } from "cursor-rpc";
+import { ClientEpoch, clientForStream, cursorAuth, dropAfterAuthError, isOauthCredential, pluginRuntimeEnv } from "./auth.js";
 import { fetchCursorModels } from "./models.js";
 import { streamCursor } from "./stream.js";
 import { cursorApiStreams } from "./stream-stub.js";
@@ -29,6 +30,7 @@ export function cursorProviderInput(options: {
           return [];
         }
         try {
+          const baseUrl = resolveEnvironment({ env: pluginRuntimeEnv() }).apiUrl;
           return await fetchCursorModels(async (signal) => {
             try {
               return await client.models(signal);
@@ -36,7 +38,7 @@ export function cursorProviderInput(options: {
               dropAfterAuthError(activeEpoch, error);
               throw error;
             }
-          }, context.signal);
+          }, context.signal, baseUrl);
         } catch (error) {
           dropAfterAuthError(activeEpoch, error);
           return [];
