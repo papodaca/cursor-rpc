@@ -6,7 +6,7 @@ import {
   type CursorRpcClient,
 } from "cursor-rpc";
 import { redactSecrets } from "./overflow.js";
-import type { OAuthCredentials, OAuthLoginCallbacks, SimpleStreamOptions, StoredCredential } from "./types.js";
+import type { ModelAuth, OAuthCredential, ProviderAuthInteraction, SimpleStreamOptions, StoredCredential } from "./types.js";
 
 export type ClientSecret = { apiKey?: string; authToken?: string };
 export type ClientFactory = (secret: ClientSecret) => CursorRpcClient;
@@ -92,9 +92,9 @@ export function cursorAuth(deps: { login?: typeof login } = {}): {
   };
   oauth: {
     name: string;
-    login: (callbacks: OAuthLoginCallbacks) => Promise<OAuthCredentials>;
-    refreshToken: (credentials: OAuthCredentials, signal?: AbortSignal) => Promise<OAuthCredentials>;
-    getApiKey: (credentials: OAuthCredentials) => string;
+    login: (interaction: ProviderAuthInteraction) => Promise<OAuthCredential>;
+    refresh: (credential: OAuthCredential, signal: AbortSignal) => Promise<OAuthCredential>;
+    toAuth: (credential: OAuthCredential) => Promise<ModelAuth>;
   };
 } {
   const loginFn = deps.login ?? login;
@@ -115,15 +115,16 @@ export function cursorAuth(deps: { login?: typeof login } = {}): {
     },
     oauth: {
       name: "Cursor",
-      login: async (callbacks) => {
+      login: async (interaction) => {
         try {
           const session = loginFn();
-          callbacks.onAuth({ url: session.url });
+          interaction.notify({ type: "auth_url", url: session.url });
           if (session.url.includes("verifier=")) {
             throw new Error("authorization URL must not include poll verifier");
           }
-          const tokens = await session.wait();
+          const tokens = await session.wait(interaction.signal);
           return {
+            type: "oauth",
             refresh: tokens.refreshToken ?? "",
             access: tokens.accessToken,
             expires: Date.now() + 24 * 60 * 60 * 1000,
@@ -133,8 +134,8 @@ export function cursorAuth(deps: { login?: typeof login } = {}): {
           throw new Error(redactSecrets(message));
         }
       },
-      refreshToken: async (credentials) => credentials,
-      getApiKey: (credentials) => credentials.access,
+      refresh: async (credential) => credential,
+      toAuth: async (credential) => ({ apiKey: credential.access }),
     },
   };
 }

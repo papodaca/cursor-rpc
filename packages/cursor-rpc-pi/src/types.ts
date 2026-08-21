@@ -89,9 +89,28 @@ export type OAuthCredentials = {
   expires: number;
 };
 
-export type OAuthLoginCallbacks = {
-  onAuth(params: { url: string }): void;
-  onPrompt?(params: { message: string }): Promise<string>;
+export type AuthPrompt =
+  | { type: "text"; message: string; placeholder?: string }
+  | { type: "secret"; message: string; placeholder?: string }
+  | { type: "select"; message: string; options: { id: string; label: string; description?: string }[] }
+  | { type: "manual_code"; message: string; placeholder?: string };
+
+export type AuthEvent =
+  | { type: "info"; message: string; links?: { url: string; label?: string }[] }
+  | { type: "auth_url"; url: string; instructions?: string }
+  | { type: "device_code"; userCode: string; verificationUri: string; intervalSeconds?: number; expiresInSeconds?: number }
+  | { type: "progress"; message: string };
+
+export type ProviderAuthInteraction = {
+  signal: AbortSignal;
+  prompt(prompt: AuthPrompt): Promise<string>;
+  notify(event: AuthEvent): void;
+};
+
+export type ModelAuth = {
+  apiKey?: string;
+  baseUrl?: string;
+  headers?: Record<string, string>;
 };
 
 export type ApiKeyCredential = { type: "api_key"; key?: string };

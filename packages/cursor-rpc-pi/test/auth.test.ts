@@ -72,16 +72,21 @@ describe("auth adapter", () => {
       }),
     });
     const credentials = await auth.oauth.login({
-      onAuth: ({ url }) => {
-        urls.push(url);
+      signal: new AbortController().signal,
+      prompt: async () => "",
+      notify: (event) => {
+        if (event.type === "auth_url") {
+          urls.push(event.url);
+        }
       },
     });
     expect(urls[0]).toContain("challenge=");
     expect(urls[0]).not.toContain("verifier=");
+    expect(credentials.type).toBe("oauth");
     expect(credentials.access).toBe(jwt);
     expect(JSON.stringify(credentials)).not.toContain("poll-verifier-secret");
     expect(JSON.stringify(credentials)).not.toContain("verifier=");
-    expect(auth.oauth.getApiKey(credentials)).toBe(jwt);
+    expect((await auth.oauth.toAuth(credentials)).apiKey).toBe(jwt);
   });
 
   it("missing credentials from streamSimple emit error and do not poll", async () => {
@@ -147,8 +152,12 @@ describe("auth adapter", () => {
     });
     await expect(
       auth.oauth.login({
-        onAuth: ({ url }) => {
-          expect(url).not.toContain("verifier=");
+        signal: new AbortController().signal,
+        prompt: async () => "",
+        notify: (event) => {
+          if (event.type === "auth_url") {
+            expect(event.url).not.toContain("verifier=");
+          }
         },
       }),
     ).rejects.toSatisfy((error: unknown) => {
