@@ -69,14 +69,17 @@ describe("workspace link", () => {
     }
   });
 
-  it("keeps Pi package identity on tools and not on the provider stub", () => {
+  it("declares Pi package identity on provider and tools, not on the protocol library", () => {
+    const lib = JSON.parse(readFileSync(path.join(libDir, "package.json"), "utf8"));
     const tools = JSON.parse(readFileSync(path.join(toolsDir, "package.json"), "utf8"));
     const provider = JSON.parse(readFileSync(path.join(piDir, "package.json"), "utf8"));
+    assert.equal(lib.pi, undefined);
+    assert.equal(lib.keywords?.includes("pi-package") ?? false, false);
     assert.equal(tools.keywords?.includes("pi-package"), true);
     assert.deepEqual(tools.pi?.extensions, ["./src/index.ts"]);
     assert.match(tools.dependencies?.["cursor-rpc"] ?? "", /^\^1\.0\.0$/);
-    assert.equal(provider.pi, undefined);
-    assert.equal(provider.keywords?.includes("pi-package") ?? false, false);
+    assert.equal(provider.keywords?.includes("pi-package"), true);
+    assert.deepEqual(provider.pi?.extensions, ["./dist/index.js"]);
   });
 
   it("fails to import when dist is missing, then succeeds after restore", () => {

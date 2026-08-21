@@ -46,7 +46,8 @@ Prompts, tool schemas, and tool results are sent to Cursor. Do not paste live AP
 
 | Package | Role |
 | --- | --- |
-| `cursor-rpc-pi` | Pi provider plugin |
-| `cursor-rpc` | Protocol client used by this plugin |
+| `cursor-rpc-pi` | This Pi package: provider plugin for Pi |
+| `cursor-rpc` | Protocol library used by this plugin (not a Pi package) |
+| `cursor-rpc-pi-tools` | Sibling Pi package: `web_fetch` / `web_search` tools |
 | `@cursor/sdk` | Unrelated Cursor product SDK |
 | community `cursor` providers | Different provider ids and auth flows |
