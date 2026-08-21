@@ -1,4 +1,4 @@
-import type { ClientRunOptions, CursorRpcClient, RunHandle } from "cursor-rpc";
+import { AuthenticationError, createClient, type ClientRunOptions, type CursorRpcClient, type RunHandle } from "cursor-rpc";
 
 export type CatalogueView = {
   ids: readonly string[];
@@ -41,6 +41,17 @@ export function wrapClient(client: Pick<CursorRpcClient, "models" | "run">): Ser
       return client.run(options);
     },
   };
+}
+
+export function providerFromEnv(env: Record<string, string | undefined> = process.env): ServerProvider {
+  try {
+    return wrapClient(createClient({ env }));
+  } catch (error) {
+    if (error instanceof AuthenticationError) {
+      throw new Error("CURSOR_API_KEY or CURSOR_AUTH_TOKEN is required to start the server");
+    }
+    throw error;
+  }
 }
 
 export function emptyProvider(): ServerProvider {
