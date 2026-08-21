@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, truncateHead } from "@earendil-works/pi-coding-agent";
 import { writeFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { applyTruncation, buildYearGuidance, formatSearchDocuments, redactToolText } from "../src/format.ts";
@@ -24,18 +25,76 @@ describe("format", () => {
     expect(() => buildYearGuidance("short")).toThrow(/YYYY-MM-DD/);
   });
 
-  it("maps documents to title, url, chunk JSON", () => {
-    expect(
-      formatSearchDocuments([
-        { url: "https://a.example", title: "A", text: "one" },
-        { url: "https://b.example", title: "B", text: "two" },
-      ]),
-    ).toBe(
-      JSON.stringify([
-        { title: "A", url: "https://a.example", chunk: "one" },
-        { title: "B", url: "https://b.example", chunk: "two" },
-      ]),
+  it("maps documents to a JSON array with one complete object per line", () => {
+    const formatted = formatSearchDocuments([
+      { url: "https://a.example", title: "A", text: "one" },
+      { url: "https://b.example", title: "B", text: "two" },
+    ]);
+    expect(formatted).toBe(
+      `[\n${JSON.stringify({ title: "A", url: "https://a.example", chunk: "one" })},\n${JSON.stringify({ title: "B", url: "https://b.example", chunk: "two" })}\n]`,
     );
+    expect(JSON.parse(formatted)).toEqual([
+      { title: "A", url: "https://a.example", chunk: "one" },
+      { title: "B", url: "https://b.example", chunk: "two" },
+    ]);
+  });
+
+  it("emits [] for an empty list", () => {
+    expect(formatSearchDocuments([])).toBe("[]");
+  });
+
+  it("keeps a truncated head of complete objects when compact JSON exceeds 50KB", async () => {
+    const documents = Array.from({ length: 40 }, (_, i) => ({
+      url: `https://example.com/${i}`,
+      title: `Doc ${i}`,
+      text: "x".repeat(2000),
+    }));
+    const compact = JSON.stringify(
+      documents.map((document) => ({
+        title: document.title,
+        url: document.url,
+        chunk: document.text,
+      })),
+    );
+    expect(compact.includes("\n")).toBe(false);
+    expect(Buffer.byteLength(compact, "utf8")).toBeGreaterThan(DEFAULT_MAX_BYTES);
+    expect(truncateHead(compact, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES }).content).toBe("");
+
+    const formatted = formatSearchDocuments(documents);
+    expect(JSON.parse(formatted)).toEqual(
+      documents.map((document) => ({
+        title: document.title,
+        url: document.url,
+        chunk: document.text,
+      })),
+    );
+
+    const truncated = truncateHead(formatted, { maxBytes: DEFAULT_MAX_BYTES, maxLines: DEFAULT_MAX_LINES });
+    expect(truncated.truncated).toBe(true);
+    expect(truncated.content.length).toBeGreaterThan(0);
+
+    const objects = truncated.content
+      .split("\n")
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line.replace(/,$/, "")));
+    expect(objects.length).toBeGreaterThan(0);
+    for (const object of objects) {
+      expect(object).toEqual({
+        title: expect.any(String),
+        url: expect.any(String),
+        chunk: expect.any(String),
+      });
+    }
+
+    const text = await applyTruncation(formatted, {
+      truncate: truncateHead,
+      formatSize: (bytes) => `${bytes}B`,
+      maxBytes: DEFAULT_MAX_BYTES,
+      maxLines: DEFAULT_MAX_LINES,
+    });
+    expect(text.startsWith(truncated.content)).toBe(true);
+    expect(text).toMatch(/\[Output truncated: /);
+    expect(text).toMatch(/Full output saved to: /);
   });
 
   it("redacts Bearer and URL userinfo", () => {

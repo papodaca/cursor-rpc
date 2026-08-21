@@ -39,11 +39,12 @@ describe("web_search", () => {
     const d = deps();
     const result = await executeWebSearch({ search_term: "pi tools" }, undefined, d);
     expect(result.content[0]?.text).toBe(
-      JSON.stringify([
-        { title: "A", url: "https://a.example", chunk: "one" },
-        { title: "B", url: "https://b.example", chunk: "two" },
-      ]),
+      `[\n${JSON.stringify({ title: "A", url: "https://a.example", chunk: "one" })},\n${JSON.stringify({ title: "B", url: "https://b.example", chunk: "two" })}\n]`,
     );
+    expect(JSON.parse(result.content[0]?.text ?? "")).toEqual([
+      { title: "A", url: "https://a.example", chunk: "one" },
+      { title: "B", url: "https://b.example", chunk: "two" },
+    ]);
     expect(result.content[0]?.text).not.toContain("should omit");
     expect(result.content[0]?.text).not.toContain("answer");
   });
