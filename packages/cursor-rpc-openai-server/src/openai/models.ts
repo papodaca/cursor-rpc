@@ -1,3 +1,4 @@
+import { emptyToUndefined } from "../config.js";
 import { openaiError, type OpenAIErrorBody } from "../errors.js";
 import type { CatalogueView } from "../provider.js";
 
@@ -25,14 +26,15 @@ export function listModelsResponse(catalogue: CatalogueView): { object: "list"; 
 }
 
 export function resolveCreateModel(catalogue: CatalogueView, model: string | undefined): string | undefined {
-  if (model === undefined || model.trim() === "") {
+  const requested = emptyToUndefined(model);
+  if (requested === undefined) {
     return catalogue.defaultId ?? catalogue.ids[0];
   }
-  return catalogue.resolve(model);
+  return catalogue.resolve(requested);
 }
 
 export function modelNotFoundError(model: string | undefined): OpenAIErrorBody {
-  const label = model === undefined || model.trim() === "" ? "" : model.trim();
+  const label = emptyToUndefined(model) ?? "";
   return openaiError({
     message: label.length === 0 ? "No model available" : `The model \`${label}\` does not exist`,
     type: "invalid_request_error",

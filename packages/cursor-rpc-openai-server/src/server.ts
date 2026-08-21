@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { text } from "node:stream/consumers";
 import { isAuthorized } from "./auth.js";
-import { assertListenReady, loadConfig, type ConfigSource, type ServerConfig } from "./config.js";
+import { assertListenReady, emptyToUndefined, loadConfig, type ConfigSource, type ServerConfig } from "./config.js";
 import {
   HttpError,
   internalError,
@@ -22,11 +23,8 @@ export type StartedServer = {
   server: Server;
 };
 
-export type RequestHandler = (req: IncomingMessage, res: ServerResponse, requestId: string) => void | Promise<void>;
-
 export type StartServerOptions = ConfigSource & {
   config?: ServerConfig;
-  handler?: RequestHandler;
   provider?: ServerProvider;
 };
 
@@ -36,14 +34,20 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   const provider = options.provider ?? emptyProvider();
   const pin: UpstreamPin = {};
   const server = createServer((req, res) => {
-    void dispatch(req, res, config, provider, pin, options.handler);
+    void dispatch(req, res, config, provider, pin);
   });
   server.requestTimeout = 0;
   server.headersTimeout = 0;
 
-  await bind(server, config.host, config.port);
+  try {
+    await bind(server, config.host, config.port);
+  } catch (error) {
+    server.close();
+    throw error;
+  }
   const address = server.address();
   if (address === null || typeof address === "string") {
+    await closeServer(server);
     throw new Error("failed to bind HTTP server");
   }
   const url = bindUrl(config.host, address.port);
@@ -53,10 +57,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     port: address.port,
     host: config.host,
     server,
-    close: () =>
-      new Promise((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
+    close: () => closeServer(server),
   };
 }
 
@@ -66,17 +67,12 @@ async function dispatch(
   config: ServerConfig,
   provider: ServerProvider,
   pin: UpstreamPin,
-  handler: RequestHandler | undefined,
 ): Promise<void> {
   const requestId = randomUUID();
   res.setHeader("x-request-id", requestId);
   try {
     if (!isAuthorized(req, config)) {
       writeJson(res, 401, invalidApiKeyError, requestId);
-      return;
-    }
-    if (handler !== undefined) {
-      await handler(req, res, requestId);
       return;
     }
     await route(req, res, provider, pin, requestId);
@@ -109,7 +105,7 @@ async function route(
   if (req.method === "GET" && path.startsWith("/v1/models/")) {
     const id = decodeURIComponent(path.slice("/v1/models/".length));
     const catalogue = await runPinned(pin, () => provider.models());
-    const canonical = id.trim() === "" ? undefined : catalogue.resolve(id);
+    const canonical = emptyToUndefined(id) === undefined ? undefined : catalogue.resolve(id);
     if (canonical === undefined) {
       writeJson(res, 404, modelNotFoundError(id), requestId);
       return;
@@ -119,14 +115,12 @@ async function route(
   }
   if (req.method === "POST" && path === "/v1/chat/completions") {
     const body = await readJson(req);
-    const catalogue = await runPinned(pin, () => provider.models());
     await runPinned(pin, () =>
       handleChatCompletion({
         res,
         requestId,
         body,
         provider,
-        catalogue,
         pin,
       }),
     );
@@ -146,11 +140,7 @@ function pathname(req: IncomingMessage): string {
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  }
-  const raw = Buffer.concat(chunks).toString("utf8");
+  const raw = await text(req);
   if (raw.trim() === "") {
     return {};
   }
@@ -159,6 +149,12 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   } catch {
     throw new HttpError(400, invalidJsonError);
   }
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
 }
 
 function bind(server: Server, host: string, port: number): Promise<void> {

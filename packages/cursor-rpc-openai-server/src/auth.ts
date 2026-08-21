@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
-import type { ServerConfig } from "./config.js";
+import { emptyToUndefined, type ServerConfig } from "./config.js";
 
 export function isAuthorized(req: IncomingMessage, config: ServerConfig): boolean {
   if (!config.authRequired) {
@@ -13,7 +13,7 @@ export function isAuthorized(req: IncomingMessage, config: ServerConfig): boolea
   return safeEqual(presented, config.apiKey);
 }
 
-export function presentedToken(req: IncomingMessage): string | undefined {
+function presentedToken(req: IncomingMessage): string | undefined {
   const authorization = headerValue(req, "authorization");
   if (authorization !== undefined) {
     const match = /^Bearer\s+(\S+)/i.exec(authorization);
@@ -41,11 +41,4 @@ function safeEqual(left: string, right: string): boolean {
     return false;
   }
   return timingSafeEqual(a, b);
-}
-
-function emptyToUndefined(value: string | undefined): string | undefined {
-  if (value === undefined || value.trim() === "") {
-    return undefined;
-  }
-  return value;
 }

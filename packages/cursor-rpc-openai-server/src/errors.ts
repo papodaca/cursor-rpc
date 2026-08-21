@@ -1,3 +1,10 @@
+import {
+  AuthenticationError,
+  CancelledError,
+  PolicyError,
+  StreamError,
+  TransportUnsupportedError,
+} from "cursor-rpc";
 import type { ServerResponse } from "node:http";
 
 export type OpenAIError = {
@@ -68,10 +75,10 @@ export function mapCursorError(error: unknown): MappedCursorError {
   if (error instanceof HttpError) {
     return { kind: "http", error, pin: false };
   }
-  if (isNamedError(error, "CancelledError")) {
+  if (error instanceof CancelledError) {
     return { kind: "cancelled" };
   }
-  if (isNamedError(error, "AuthenticationError") || isNamedError(error, "PolicyError")) {
+  if (error instanceof AuthenticationError || error instanceof PolicyError) {
     return {
       kind: "http",
       pin: true,
@@ -86,7 +93,7 @@ export function mapCursorError(error: unknown): MappedCursorError {
       ),
     };
   }
-  if (isNamedError(error, "TransportUnsupportedError") || (isNamedError(error, "StreamError") && isRetryable(error))) {
+  if (error instanceof TransportUnsupportedError || (error instanceof StreamError && error.isRetryable)) {
     return {
       kind: "http",
       pin: false,
@@ -108,14 +115,6 @@ export function mapCursorError(error: unknown): MappedCursorError {
   };
 }
 
-function isNamedError(error: unknown, name: string): error is Error {
-  return error instanceof Error && error.name === name;
-}
-
-function isRetryable(error: Error): boolean {
-  return "isRetryable" in error && error.isRetryable === true;
-}
-
 export function writeJson(res: ServerResponse, status: number, body: unknown, requestId: string): void {
   if (res.writableEnded) {
     return;
@@ -126,7 +125,7 @@ export function writeJson(res: ServerResponse, status: number, body: unknown, re
   res.end(JSON.stringify(body));
 }
 
-export function redactSecrets(value: string): string {
+function redactSecrets(value: string): string {
   return value
     .replace(/Bearer\s+\S+/gi, "[redacted]")
     .replace(/(authorization:\s*)(\S+)/gi, "$1[redacted]")

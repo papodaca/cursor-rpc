@@ -1,4 +1,5 @@
 import { AuthenticationError, createClient, type ClientRunOptions, type CursorRpcClient, type RunHandle } from "cursor-rpc";
+import { emptyToUndefined } from "./config.js";
 
 export type CatalogueView = {
   ids: readonly string[];
@@ -63,11 +64,4 @@ export function emptyProvider(): ServerProvider {
       throw new Error("cursor-rpc client was not provided");
     },
   };
-}
-
-function emptyToUndefined(value: string | undefined): string | undefined {
-  if (value === undefined || value.trim() === "") {
-    return undefined;
-  }
-  return value;
 }

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import type { ClientRunOptions, UsageCounts } from "cursor-rpc";
 import { HttpError, mapCursorError, openaiError, writeJson, type MappedCursorError } from "../errors.js";
-import type { CatalogueView, ServerProvider } from "../provider.js";
+import type { ServerProvider } from "../provider.js";
 import { mapMessages } from "./messages.js";
 import { modelNotFoundError, resolveCreateModel } from "./models.js";
 import { completionChunk, writeSseData, writeSseDone, writeSseHeaders, type Usage } from "./sse.js";
@@ -16,12 +16,12 @@ export async function handleChatCompletion(options: {
   requestId: string;
   body: unknown;
   provider: ServerProvider;
-  catalogue: CatalogueView;
   pin: UpstreamPin;
 }): Promise<void> {
   const request = parseCreateRequest(options.body);
   const mapped = mapMessages(request.messages);
-  const model = resolveCreateModel(options.catalogue, request.model);
+  const catalogue = await runPinned(options.pin, () => options.provider.models());
+  const model = resolveCreateModel(catalogue, request.model);
   if (model === undefined) {
     throw new HttpError(404, modelNotFoundError(request.model));
   }
@@ -110,7 +110,7 @@ export async function handleChatCompletion(options: {
   }
 }
 
-export function applyMappedError(mapped: MappedCursorError, pin: UpstreamPin): HttpError {
+function applyMappedError(mapped: MappedCursorError, pin: UpstreamPin): HttpError {
   if (mapped.kind === "cancelled") {
     return new HttpError(499, openaiError({ message: "cancelled", type: "api_error", param: null, code: "cancelled" }));
   }
@@ -163,7 +163,7 @@ type CreateRequest = {
 };
 
 function parseCreateRequest(body: unknown): CreateRequest {
-  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+  if (!isRecord(body)) {
     throw new HttpError(
       400,
       openaiError({
@@ -174,7 +174,7 @@ function parseCreateRequest(body: unknown): CreateRequest {
       }),
     );
   }
-  const record = body as Record<string, unknown>;
+  const record = body;
   rejectUnsupported(record);
   return {
     messages: record.messages,

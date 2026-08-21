@@ -32,7 +32,7 @@ export function assertListenReady(config: ServerConfig): void {
   }
 }
 
-export function isLoopbackHost(host: string): boolean {
+function isLoopbackHost(host: string): boolean {
   return LOOPBACK_HOSTS.has(host);
 }
 
@@ -78,7 +78,7 @@ function parsePort(value: string): number {
   return port;
 }
 
-function emptyToUndefined(value: string | undefined): string | undefined {
+export function emptyToUndefined(value: string | undefined): string | undefined {
   if (value === undefined || value.trim() === "") {
     return undefined;
   }
