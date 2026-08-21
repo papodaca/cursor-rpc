@@ -153,6 +153,7 @@ class WebClientImpl implements WebClient {
     if (this.#modelFlight === undefined) {
       await this.#refreshBearer(signal);
       this.#throwIfClosed(signal);
+      this.#throwIfPinned();
       this.#modelFlight ??= this.#resolveModelId().catch((error) => {
         this.#modelFlight = undefined;
         throw error;
@@ -214,6 +215,7 @@ class WebClientImpl implements WebClient {
     try {
       await this.#refreshBearer(callSignal);
       this.#throwIfClosed(signal);
+      this.#throwIfPinned();
       return await unaryCall(this.#transport, method, input, { signal });
     } catch (error) {
       const mapped = mapTransportError(error);
@@ -223,12 +225,11 @@ class WebClientImpl implements WebClient {
   }
 
   async #refreshBearer(callSignal?: AbortSignal): Promise<void> {
-    if (this.#auth.pinned) {
-      throw new AuthenticationError("invalid token, please log in again");
-    }
+    this.#throwIfPinned();
     this.#tokenFlight ??= this.#auth
       .accessToken(this.#options.signal)
       .then((token) => {
+        this.#throwIfPinned();
         this.#bearer = token;
         return token;
       })
@@ -236,11 +237,19 @@ class WebClientImpl implements WebClient {
         this.#tokenFlight = undefined;
       });
     await raceWithAbort(this.#tokenFlight, callSignal);
+    this.#throwIfPinned();
   }
 
   #recordAuthFailure(error: unknown): void {
     if (this.#auth.handleAuthFailure(error, this.#bearer !== undefined)) {
       this.#bearer = undefined;
+    }
+  }
+
+  #throwIfPinned(): void {
+    if (this.#auth.pinned) {
+      this.#bearer = undefined;
+      throw new AuthenticationError("invalid token, please log in again");
     }
   }
 

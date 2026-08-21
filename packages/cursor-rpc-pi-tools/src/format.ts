@@ -58,13 +58,17 @@ export function utcDateString(now: Date): string {
 }
 
 export function formatSearchDocuments(documents: SearchDocument[]): string {
-  return JSON.stringify(
-    documents.map((document) => ({
+  if (documents.length === 0) {
+    return "[]";
+  }
+  const objects = documents.map((document) =>
+    JSON.stringify({
       title: document.title,
       url: document.url,
       chunk: document.text,
-    })),
+    }),
   );
+  return `[\n${objects.join(",\n")}\n]`;
 }
 
 export function redactToolText(value: string): string {

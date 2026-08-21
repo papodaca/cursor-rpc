@@ -466,6 +466,54 @@ describe("createWebClient", () => {
     expect(exchanges).toBe(1);
   });
 
+  it("pins after Unauthenticated overlapping a second accessToken refresh and does not complete search", async () => {
+    let exchanges = 0;
+    const fetchEntered = Promise.withResolvers<void>();
+    const fetchGate = Promise.withResolvers<void>();
+    const secondExchangeStarted = Promise.withResolvers<void>();
+    const secondExchangeGate = Promise.withResolvers<void>();
+    const client = createWebClientWithTransport(
+      fakeUnaryTransport(async (method) => {
+        if (method.name === "RunWebFetch") {
+          fetchEntered.resolve();
+          await fetchGate.promise;
+          throw new ConnectError("expired", Code.Unauthenticated);
+        }
+        if (method.name === "GetDefaultModelForCli") {
+          return unaryResponse(method, create(GetDefaultModelForCliResponseSchema, { model: MODEL }));
+        }
+        if (method.name === "RunWebSearch") {
+          return unaryResponse(method, create(RunWebSearchResponseSchema, { documents: [] }));
+        }
+        throw new Error(`unexpected ${method.name}`);
+      }),
+      {
+        apiKey: "key_live_secret",
+        store: new MemoryCredentialStore(),
+        fetch: async () => {
+          exchanges += 1;
+          if (exchanges === 1) {
+            return jsonResponse(200, { accessToken: "access", refreshToken: "refresh" });
+          }
+          secondExchangeStarted.resolve();
+          await secondExchangeGate.promise;
+          return jsonResponse(200, { accessToken: "access2", refreshToken: "refresh2" });
+        },
+      },
+    );
+    const fetchPromise = client.fetch("https://example.com");
+    await fetchEntered.promise;
+    const searchPromise = client.search("term");
+    await secondExchangeStarted.promise;
+    fetchGate.resolve();
+    await expect(fetchPromise).rejects.toBeInstanceOf(AuthenticationError);
+    secondExchangeGate.resolve();
+    await expect(searchPromise).rejects.toBeInstanceOf(AuthenticationError);
+    expect(exchanges).toBe(2);
+    await expect(client.search("later")).rejects.toBeInstanceOf(AuthenticationError);
+    expect(exchanges).toBe(2);
+  });
+
   it("throws unimplemented without fetching the url or closing the client", async () => {
     const urls: string[] = [];
     const originalFetch = globalThis.fetch;
