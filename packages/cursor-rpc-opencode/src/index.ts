@@ -1,9 +1,9 @@
 import { createClient, type CreateClientOptions, type CursorRpcClient } from "cursor-rpc";
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { sanitizeProviderHeaders } from "./headers.js";
+import { resolvedClientOptions, sameSettingsInputs } from "./client-options.js";
 import { CursorLanguageModel } from "./language-model.js";
 
-export { TOOLS_SUPPORTED, toolsSupported } from "./language-model.js";
+export { TOOLS_SUPPORTED } from "./language-model.js";
 export { cursorPlugin, plugin } from "./catalogue.js";
 
 export type CursorProviderSettings = {
@@ -22,17 +22,16 @@ export type CursorProvider = {
 
 export function createCursor(settings: CursorProviderSettings = {}): CursorProvider {
   let client: CursorRpcClient | undefined;
-  let lastOptions: CreateClientOptions | undefined;
+  let lastInputs: CursorProviderSettings | undefined;
 
   function getClient(): CursorRpcClient {
-    const next = resolvedClientOptions(settings);
-    if (client !== undefined && lastOptions !== undefined && sameClientOptions(lastOptions, next)) {
+    if (client !== undefined && lastInputs !== undefined && sameSettingsInputs(lastInputs, settings)) {
       return client;
     }
     client?.close();
-    const created = createClient(next);
+    const created = createClient(resolvedClientOptions(settings));
     client = created;
-    lastOptions = next;
+    lastInputs = settings;
     return created;
   }
 

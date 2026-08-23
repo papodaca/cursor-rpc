@@ -4,7 +4,6 @@ import {
   type LanguageModelV3CallOptions,
   type LanguageModelV3Content,
   type LanguageModelV3FinishReason,
-  type LanguageModelV3FunctionTool,
   type LanguageModelV3GenerateResult,
   type LanguageModelV3StreamPart,
   type LanguageModelV3StreamResult,
@@ -60,7 +59,8 @@ export async function streamCursorRun(options: {
 }): Promise<LanguageModelV3StreamResult> {
   const mapped = mapPrompt(options.call.prompt);
   const warnings = [...callWarnings(options.call), ...mapped.warnings];
-  const runOptions = clientRunOptions(options.modelId, options.call, mapped, options.mode);
+  const mcpTools = mapMcpTools(options.call.tools);
+  const runOptions = clientRunOptions(options.modelId, options.call, mapped, mcpTools, options.mode);
 
   let handle: RunHandle;
   try {
@@ -70,7 +70,12 @@ export async function streamCursorRun(options: {
   }
 
   return {
-    stream: pumpHandle(handle, options.call.abortSignal, warnings, advertisedToolNames(options.call.tools)),
+    stream: pumpHandle(
+      handle,
+      options.call.abortSignal,
+      warnings,
+      new Set((mcpTools ?? []).map((tool) => tool.toolName)),
+    ),
   };
 }
 
@@ -136,6 +141,7 @@ function clientRunOptions(
   modelId: string,
   call: LanguageModelV3CallOptions,
   mapped: ReturnType<typeof mapPrompt>,
+  mcpTools: McpToolDefinition[] | undefined,
   mode?: ProbeRunMode,
 ): ClientRunOptions {
   const options: ClientRunOptions = {
@@ -151,7 +157,6 @@ function clientRunOptions(
   if (mapped.conversationHistory !== undefined) {
     options.conversationHistory = mapped.conversationHistory;
   }
-  const mcpTools = mapMcpTools(call.tools);
   if (mcpTools !== undefined) {
     options.mcpTools = mcpTools;
   }
@@ -179,14 +184,6 @@ function mapMcpTools(tools: LanguageModelV3CallOptions["tools"]): McpToolDefinit
     } as McpToolDefinition);
   }
   return mapped.length === 0 ? undefined : mapped;
-}
-
-function advertisedToolNames(tools: LanguageModelV3CallOptions["tools"]): Set<string> {
-  return new Set(
-    (tools ?? [])
-      .filter((tool): tool is LanguageModelV3FunctionTool => tool.type === "function")
-      .map((tool) => tool.name),
-  );
 }
 
 function callWarnings(call: LanguageModelV3CallOptions): SharedV3Warning[] {
@@ -246,6 +243,32 @@ function pumpHandle(
         }
       };
 
+      const ctx = {
+        abortHandle: () => {
+          handle.abort();
+        },
+        advertisedTools,
+        closeReasoning,
+        closeText,
+        controller,
+        nextReasoningId: () => {
+          reasoningSeq += 1;
+          reasoningId = `reasoning-${reasoningSeq}`;
+          return reasoningId;
+        },
+        nextTextId: () => {
+          textSeq += 1;
+          textId = `text-${textSeq}`;
+          return textId;
+        },
+        onFinish: () => {
+          finished = true;
+        },
+        reasoningId: () => reasoningId,
+        textId: () => textId,
+        warnings,
+      };
+
       try {
         for await (const event of handle) {
           if (abortSignal?.aborted === true) {
@@ -254,31 +277,7 @@ function pumpHandle(
           if (finished) {
             break;
           }
-          applyEvent(event, {
-            abortHandle: () => {
-              handle.abort();
-            },
-            advertisedTools,
-            closeReasoning,
-            closeText,
-            controller,
-            nextReasoningId: () => {
-              reasoningSeq += 1;
-              reasoningId = `reasoning-${reasoningSeq}`;
-              return reasoningId;
-            },
-            nextTextId: () => {
-              textSeq += 1;
-              textId = `text-${textSeq}`;
-              return textId;
-            },
-            onFinish: () => {
-              finished = true;
-            },
-            reasoningId: () => reasoningId,
-            textId: () => textId,
-            warnings,
-          });
+          applyEvent(event, ctx);
           if (finished) {
             break;
           }
@@ -334,24 +333,26 @@ function applyEvent(
   },
 ): void {
   switch (event.type) {
-    case "text_delta":
+    case "text_delta": {
       ctx.closeReasoning();
-      if (ctx.textId() === undefined) {
-        ctx.controller.enqueue({ type: "text-start", id: ctx.nextTextId() });
+      let id = ctx.textId();
+      if (id === undefined) {
+        id = ctx.nextTextId();
+        ctx.controller.enqueue({ type: "text-start", id });
       }
-      ctx.controller.enqueue({ type: "text-delta", id: ctx.textId() ?? ctx.nextTextId(), delta: event.text });
+      ctx.controller.enqueue({ type: "text-delta", id, delta: event.text });
       break;
-    case "thinking_delta":
+    }
+    case "thinking_delta": {
       ctx.closeText();
-      if (ctx.reasoningId() === undefined) {
-        ctx.controller.enqueue({ type: "reasoning-start", id: ctx.nextReasoningId() });
+      let id = ctx.reasoningId();
+      if (id === undefined) {
+        id = ctx.nextReasoningId();
+        ctx.controller.enqueue({ type: "reasoning-start", id });
       }
-      ctx.controller.enqueue({
-        type: "reasoning-delta",
-        id: ctx.reasoningId() ?? ctx.nextReasoningId(),
-        delta: event.text,
-      });
+      ctx.controller.enqueue({ type: "reasoning-delta", id, delta: event.text });
       break;
+    }
     case "thinking_completed":
       ctx.closeReasoning();
       break;

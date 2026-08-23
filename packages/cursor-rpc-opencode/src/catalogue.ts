@@ -16,23 +16,20 @@ export type OpenCodeModelRow = {
   capabilities: { tools: boolean };
 };
 
+type OpenCodeClientSettings = {
+  apiKey?: string;
+  env?: Record<string, string | undefined>;
+  fetch?: CreateClientOptions["fetch"];
+  headers?: Headers | Record<string, string>;
+};
+
 export type OpenCodeProviderBlock = {
   npm?: string;
   package?: string;
   name?: string;
-  options?: {
-    apiKey?: string;
-    env?: Record<string, string | undefined>;
-    fetch?: CreateClientOptions["fetch"];
-    headers?: Headers | Record<string, string>;
-  };
-  settings?: {
-    apiKey?: string;
-    env?: Record<string, string | undefined>;
-    fetch?: CreateClientOptions["fetch"];
-    headers?: Headers | Record<string, string>;
-  };
-  models?: Record<string, OpenCodeModelRow | { name?: string; tool_call?: boolean }>;
+  options?: OpenCodeClientSettings;
+  settings?: OpenCodeClientSettings;
+  models?: Record<string, Partial<OpenCodeModelRow>>;
 };
 
 export type OpenCodeConfig = {
@@ -109,11 +106,7 @@ function usableRows(models: ModelDetails[] | undefined): Record<string, OpenCode
     if (id.length === 0) {
       continue;
     }
-    const name = nonEmpty(model.displayName)
-      ? model.displayName
-      : nonEmpty(model.displayNameShort)
-        ? model.displayNameShort
-        : id;
+    const name = [model.displayName, model.displayNameShort].find(nonEmpty) ?? id;
     rows[id] = {
       id,
       name,

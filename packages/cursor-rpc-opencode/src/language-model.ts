@@ -3,7 +3,6 @@ import type { CursorRpcClient } from "cursor-rpc";
 import { consumeCursorStream, streamCursorRun, toProviderError } from "./stream.js";
 
 export const TOOLS_SUPPORTED = true;
-export const toolsSupported = TOOLS_SUPPORTED;
 
 export class CursorLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = "v3" as const;

@@ -1,4 +1,9 @@
-import type { LanguageModelV3Message, LanguageModelV3Prompt, SharedV3Warning } from "@ai-sdk/provider";
+import type {
+  LanguageModelV3Message,
+  LanguageModelV3Prompt,
+  LanguageModelV3ToolResultOutput,
+  SharedV3Warning,
+} from "@ai-sdk/provider";
 import type { ConversationHistory } from "cursor-rpc";
 
 export type MappedPrompt = {
@@ -21,7 +26,6 @@ export function mapPrompt(messages: LanguageModelV3Prompt): MappedPrompt {
   const warnings: SharedV3Warning[] = [];
   const systems: string[] = [];
   const items: HistoryItem[] = [];
-  let lastUserIndex = -1;
 
   for (const message of messages) {
     if (message.role === "system") {
@@ -32,7 +36,6 @@ export function mapPrompt(messages: LanguageModelV3Prompt): MappedPrompt {
     }
     if (message.role === "user") {
       items.push({ kind: "user", text: collectUserText(message, warnings) });
-      lastUserIndex = items.length - 1;
       continue;
     }
     if (message.role === "tool") {
@@ -45,6 +48,7 @@ export function mapPrompt(messages: LanguageModelV3Prompt): MappedPrompt {
     }
   }
 
+  const lastUserIndex = items.findLastIndex((item) => item.kind === "user");
   const last = lastUserIndex >= 0 ? items[lastUserIndex] : undefined;
   const prompt = last?.kind === "user" ? last.text : "";
   const historyItems = items.filter((item, index) => index !== lastUserIndex && !isEmptyHistoryItem(item));
@@ -136,7 +140,7 @@ function stringifyArgs(input: unknown): string {
   return typeof input === "string" ? input : JSON.stringify(input ?? {});
 }
 
-function toolOutputText(output: { type: string; value?: unknown; reason?: string }): { text: string; isError?: boolean } {
+function toolOutputText(output: LanguageModelV3ToolResultOutput): { text: string; isError?: boolean } {
   switch (output.type) {
     case "text":
       return { text: typeof output.value === "string" ? output.value : String(output.value ?? "") };
@@ -161,18 +165,12 @@ function toolOutputText(output: { type: string; value?: unknown; reason?: string
       }
       return { text: "" };
     default:
-      return { text: output.value === undefined ? "" : stringifyArgs(output.value) };
+      return { text: "" };
   }
 }
 
 function isEmptyHistoryItem(item: HistoryItem): boolean {
-  if (item.kind === "user") {
-    return item.text.length === 0;
-  }
-  if (item.kind === "assistant") {
-    return item.parts.length === 0;
-  }
-  return false;
+  return item.kind === "user" && item.text.length === 0;
 }
 
 function buildHistory(items: HistoryItem[]): ConversationHistory {
