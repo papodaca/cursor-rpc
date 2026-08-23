@@ -248,6 +248,6 @@ describe("README install docs", () => {
     expect(readme).toMatch(/fail-closed|fail closed/i);
     expect(readme).not.toMatch(/npm link/);
     expect(readme).not.toContain("~/.local/share/opencode");
-    expect(readme).not.toMatch(/login\(\)/);
+    expect(readme).toMatch(/never opens a browser|interactive authentication/i);
   });
 });

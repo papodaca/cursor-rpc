@@ -45,7 +45,8 @@ export function mapPrompt(messages: LanguageModelV3Prompt): MappedPrompt {
     }
   }
 
-  const prompt = lastUserIndex >= 0 && items[lastUserIndex]?.kind === "user" ? items[lastUserIndex].text : "";
+  const last = lastUserIndex >= 0 ? items[lastUserIndex] : undefined;
+  const prompt = last?.kind === "user" ? last.text : "";
   const historyItems = items.filter((item, index) => index !== lastUserIndex && !isEmptyHistoryItem(item));
   const customSystemPrompt = systems.length > 0 ? systems.join("\n\n") : undefined;
 
