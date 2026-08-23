@@ -1,33 +1,40 @@
 # cursor-rpc-opencode
 
-OpenCode LanguageModelV3 provider wrapping `cursor-rpc`. Cursor is a language-model backend; OpenCode owns session, tools, permissions, and workspace. Local exec on the Cursor side is fail-closed (empty workspace, no shell or file handlers).
+OpenCode LanguageModelV3 provider wrapping `cursor-rpc`. Requires **Node.js 22** or later.
 
-Requires Node.js 22 or later.
+Cursor is the language-model backend. **OpenCode owns session, tools, permissions, and workspace.** Cursor local exec is fail-closed: this package does not run shell or file tools on Cursor's side.
 
-Provider id is `cursor`. The package exports `createCursor` (the factory OpenCode loads) and `plugin` (a v1 `config` hook that overlays the signed-in usable catalogue). The hook never opens a browser or starts interactive authentication.
+Build the package before a local `file://` install:
 
-Credentials come from provider `options.apiKey` / `settings.apiKey`, or from `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN`. Do not commit those values. Missing credentials fail closed.
+```bash
+npm run build -w cursor-rpc-opencode
+```
 
-An empty `models` map silently skips the package. Install with at least one static seed (shown below). When credentials work, the plugin replaces that seed with live usable rows from `client.models()`. If overlay fails (auth, empty catalogue, transport, timeout), the seed stays.
+Point `plugin` / `provider.cursor.npm` (v1) or `plugins` / `providers.cursor.package` (v2) at an absolute `file://` URL to the built package root (`packages/cursor-rpc-opencode`) or its ESM entry (`dist/index.js`).
 
-Build the package first (`npm run build -w cursor-rpc-opencode`). Point `file://` at the built package root or the ESM entry (`dist/index.js`). Use an absolute path. The seed id below is only a loader placeholder (`cursor-rpc`); live rows use catalogue `modelId` values such as `composer-2.5`.
+Provider id is **`cursor`**. The package exports `createCursor` (the factory OpenCode loads from the first `create*` export) and `cursorPlugin` (also exported as `plugin`) — a v1 `config` hook that overlays the signed-in usable catalogue. The hook never calls `login()` and never opens a browser.
+
+Credentials come from provider `options.apiKey` / `settings.apiKey`, or from `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN`. Missing credentials fail closed.
+
+**An empty `models` map silently skips the package.** Install with at least one static seed (shown below). When credentials work, the plugin **replaces** that seed with live usable rows from `client.models()`. If overlay fails (auth, empty catalogue, transport, timeout), the seed stays.
 
 ## OpenCode v1
 
 ```json
 {
-  "plugin": ["file:///absolute/path/to/cursor-rpc-opencode"],
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["file:///absolute/path/to/packages/cursor-rpc-opencode"],
   "provider": {
     "cursor": {
-      "npm": "file:///absolute/path/to/cursor-rpc-opencode",
-      "options": {},
+      "npm": "file:///absolute/path/to/packages/cursor-rpc-opencode",
+      "name": "Cursor",
+      "options": {
+        "apiKey": "{env:CURSOR_API_KEY}"
+      },
       "models": {
-        "cursor-rpc": {
-          "id": "cursor-rpc",
-          "name": "Cursor RPC",
-          "tool_call": true,
-          "reasoning": true,
-          "attachment": false
+        "composer-2.5": {
+          "name": "Composer 2.5",
+          "tool_call": true
         }
       }
     }
@@ -35,24 +42,27 @@ Build the package first (`npm run build -w cursor-rpc-opencode`). Point `file://
 }
 ```
 
-Set `options.apiKey` or export `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` in the environment.
+You can set `options.apiKey` or export `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` in the environment instead.
 
 ## OpenCode v2
 
 ```json
 {
-  "plugins": ["file:///absolute/path/to/cursor-rpc-opencode"],
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["file:///absolute/path/to/packages/cursor-rpc-opencode"],
   "providers": {
     "cursor": {
-      "package": "file:///absolute/path/to/cursor-rpc-opencode",
-      "settings": {},
+      "package": "file:///absolute/path/to/packages/cursor-rpc-opencode",
+      "name": "Cursor",
+      "settings": {
+        "apiKey": "{env:CURSOR_API_KEY}"
+      },
       "models": {
-        "cursor-rpc": {
-          "id": "cursor-rpc",
-          "name": "Cursor RPC",
-          "capabilities": { "tools": true },
-          "reasoning": true,
-          "attachment": false
+        "composer-2.5": {
+          "name": "Composer 2.5",
+          "capabilities": {
+            "tools": true
+          }
         }
       }
     }
@@ -60,7 +70,7 @@ Set `options.apiKey` or export `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` in the env
 }
 ```
 
-`settings` is the v2 options bag (`apiKey` and other factory settings). Catalogue rows advertise `capabilities.tools` from the same tools-supported signal as v1 `tool_call`.
+`settings` is the v2 options bag. Catalogue rows advertise `capabilities.tools` from the same tools-supported signal as v1 `tool_call`.
 
 ## Factory
 

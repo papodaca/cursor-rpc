@@ -5,28 +5,26 @@ import {
   type ModelDetails,
 } from "cursor-rpc";
 import { sanitizeProviderHeaders } from "./headers.js";
-import { toolsSupported } from "./language-model.js";
-
-export const SEED_MODEL_ID = "cursor-rpc";
+import { TOOLS_SUPPORTED } from "./language-model.js";
 
 export type OpenCodeModelRow = {
   id?: string;
-  name?: string;
-  tool_call?: boolean;
-  reasoning?: boolean;
-  attachment?: boolean;
-  capabilities?: { tools?: boolean };
+  name: string;
+  tool_call: boolean;
+  reasoning: boolean;
+  attachment: boolean;
+  capabilities: { tools: boolean };
 };
 
 export type OpenCodeProviderBlock = {
   npm?: string;
   package?: string;
+  name?: string;
   options?: {
     apiKey?: string;
     env?: Record<string, string | undefined>;
     fetch?: CreateClientOptions["fetch"];
     headers?: Headers | Record<string, string>;
-    abortSignal?: AbortSignal;
   };
   settings?: {
     apiKey?: string;
@@ -34,7 +32,7 @@ export type OpenCodeProviderBlock = {
     fetch?: CreateClientOptions["fetch"];
     headers?: Headers | Record<string, string>;
   };
-  models?: Record<string, OpenCodeModelRow>;
+  models?: Record<string, OpenCodeModelRow | { name?: string; tool_call?: boolean }>;
 };
 
 export type OpenCodeConfig = {
@@ -45,24 +43,13 @@ export type OpenCodeConfig = {
 export type CatalogueOverlayOptions = {
   apiKey?: string;
   env?: Record<string, string | undefined>;
+  fetch?: CreateClientOptions["fetch"];
+  headers?: Headers | Record<string, string>;
   createClient?: typeof defaultCreateClient;
   modelsTimeoutMs?: number;
 };
 
 const DEFAULT_MODELS_TIMEOUT_MS = 10_000;
-
-export const cursorPlugin = {
-  name: "cursor-rpc",
-  config: overlayCursorCatalogue,
-};
-
-export async function plugin(): Promise<{
-  config: (cfg: OpenCodeConfig) => Promise<OpenCodeConfig>;
-}> {
-  return {
-    config: async (cfg) => overlayCursorCatalogue(cfg),
-  };
-}
 
 export async function overlayCursorCatalogue(
   cfg: OpenCodeConfig,
@@ -76,6 +63,13 @@ export async function overlayCursorCatalogue(
   return cfg;
 }
 
+export const cursorPlugin = {
+  name: "cursor-rpc",
+  config: overlayCursorCatalogue,
+};
+
+export { cursorPlugin as plugin };
+
 async function overlayOrKeepSeed(cfg: OpenCodeConfig, options: CatalogueOverlayOptions): Promise<void> {
   const env = resolveEnv(cfg, options);
   const apiKey = resolveApiKey(cfg, options);
@@ -86,7 +80,7 @@ async function overlayOrKeepSeed(cfg: OpenCodeConfig, options: CatalogueOverlayO
   const createClient = options.createClient ?? defaultCreateClient;
   let client: CursorRpcClient | undefined;
   try {
-    client = createClient(buildClientOptions(cfg, apiKey, env));
+    client = createClient(buildClientOptions(cfg, options, apiKey, env));
     const catalogue = await modelsWithTimeout(client, options.modelsTimeoutMs ?? DEFAULT_MODELS_TIMEOUT_MS);
     if (catalogue === "timed_out") {
       return;
@@ -119,25 +113,23 @@ function usableRows(models: ModelDetails[] | undefined): Record<string, OpenCode
       ? model.displayName
       : nonEmpty(model.displayNameShort)
         ? model.displayNameShort
-        : nonEmpty(model.displayModelId)
-          ? model.displayModelId
-          : id;
+        : id;
     rows[id] = {
       id,
       name,
-      tool_call: toolsSupported,
+      tool_call: TOOLS_SUPPORTED,
       reasoning: true,
       attachment: false,
-      capabilities: { tools: toolsSupported },
+      capabilities: { tools: TOOLS_SUPPORTED },
     };
   }
   return rows;
 }
 
 function replaceModels(cfg: OpenCodeConfig, rows: Record<string, OpenCodeModelRow>): void {
-  if (cfg.provider?.cursor !== undefined) {
-    cfg.provider.cursor.models = rows;
-  }
+  cfg.provider ??= {};
+  cfg.provider.cursor ??= {};
+  cfg.provider.cursor.models = rows;
   if (cfg.providers?.cursor !== undefined) {
     cfg.providers.cursor.models = rows;
   }
@@ -192,6 +184,7 @@ function hasOverlayCredentials(
 
 function buildClientOptions(
   cfg: OpenCodeConfig,
+  pluginOptions: CatalogueOverlayOptions,
   apiKey: string | undefined,
   env: Record<string, string | undefined>,
 ): CreateClientOptions {
@@ -201,10 +194,11 @@ function buildClientOptions(
   if (apiKey !== undefined) {
     options.apiKey = apiKey;
   }
-  if (settings?.fetch !== undefined) {
-    options.fetch = settings.fetch;
+  const fetch = pluginOptions.fetch ?? settings?.fetch;
+  if (fetch !== undefined) {
+    options.fetch = fetch;
   }
-  const headers = sanitizeProviderHeaders(settings?.headers);
+  const headers = sanitizeProviderHeaders(pluginOptions.headers ?? settings?.headers);
   if (headers !== undefined) {
     options.headers = headers;
   }
