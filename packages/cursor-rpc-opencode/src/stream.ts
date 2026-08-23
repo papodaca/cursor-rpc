@@ -309,7 +309,6 @@ function emitMissingTurnEnded(
   closeText();
   const warning: SharedV3Warning = { type: "other", message: MISSING_TURN_ENDED };
   warnings.push(warning);
-  controller.enqueue({ type: "stream-start", warnings: [warning] });
   controller.enqueue({
     type: "finish",
     usage: mapUsage(),
