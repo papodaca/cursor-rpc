@@ -4,6 +4,7 @@ import { sanitizeProviderHeaders } from "./headers.js";
 import { CursorLanguageModel } from "./language-model.js";
 
 export { TOOLS_SUPPORTED, toolsSupported } from "./language-model.js";
+export { cursorPlugin, plugin } from "./catalogue.js";
 
 export type CursorProviderSettings = {
   name?: string;
