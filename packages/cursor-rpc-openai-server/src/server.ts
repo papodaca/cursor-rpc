@@ -23,6 +23,7 @@ import {
 import { handleChatCompletion, runPinned, type UpstreamPin } from "./openai/completions.js";
 import { listModelsResponse, modelNotFoundError, toOpenAIModel } from "./openai/models.js";
 import { openResponseStore, type ResponseStore } from "./openai/response-store.js";
+import { handleCreateResponse } from "./openai/responses.js";
 import { emptyProvider, type ServerProvider } from "./provider.js";
 
 export type StartedServer = {
@@ -165,6 +166,20 @@ async function route(
         body,
         provider,
         pin,
+      }),
+    );
+    return;
+  }
+  if (req.method === "POST" && path === "/v1/responses") {
+    const body = await readJson(req);
+    await runPinned(pin, () =>
+      handleCreateResponse({
+        res,
+        requestId,
+        body,
+        provider,
+        pin,
+        store,
       }),
     );
     return;
