@@ -3,6 +3,8 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { sanitizeProviderHeaders } from "./headers.js";
 import { CursorLanguageModel } from "./language-model.js";
 
+export { TOOLS_SUPPORTED, toolsSupported } from "./language-model.js";
+
 export type CursorProviderSettings = {
   name?: string;
   apiKey?: string;

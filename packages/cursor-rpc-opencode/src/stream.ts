@@ -24,6 +24,8 @@ import {
 } from "cursor-rpc";
 import { mapPrompt } from "./prompt.js";
 
+type ProbeRunMode = NonNullable<ClientRunOptions["mode"]>;
+
 const MISSING_TURN_ENDED = "stream ended without turn_ended";
 
 const UNSUPPORTED_SAMPLING = [
@@ -53,10 +55,12 @@ export async function streamCursorRun(options: {
   client: CursorRpcClient;
   modelId: string;
   call: LanguageModelV3CallOptions;
+  /** Test-only AGENT probe. Shipped `doStream` omits this so the Run stays ASK. */
+  mode?: ProbeRunMode;
 }): Promise<LanguageModelV3StreamResult> {
   const mapped = mapPrompt(options.call.prompt);
   const warnings = [...callWarnings(options.call), ...mapped.warnings];
-  const runOptions = clientRunOptions(options.modelId, options.call, mapped);
+  const runOptions = clientRunOptions(options.modelId, options.call, mapped, options.mode);
 
   let handle: RunHandle;
   try {
@@ -132,6 +136,7 @@ function clientRunOptions(
   modelId: string,
   call: LanguageModelV3CallOptions,
   mapped: ReturnType<typeof mapPrompt>,
+  mode?: ProbeRunMode,
 ): ClientRunOptions {
   const options: ClientRunOptions = {
     prompt: mapped.prompt,
@@ -149,6 +154,9 @@ function clientRunOptions(
   const mcpTools = mapMcpTools(call.tools);
   if (mcpTools !== undefined) {
     options.mcpTools = mcpTools;
+  }
+  if (mode === "agent") {
+    options.mode = "agent";
   }
   return options;
 }
