@@ -124,6 +124,7 @@ export async function consumeCursorStream(
         case "finish":
           finishReason = part.finishReason;
           usage = part.usage;
+          warnings.push(...warningsFromFinish(part));
           break;
         case "error":
           throw part.error;
@@ -273,13 +274,14 @@ function pumpHandle(
           finished = true;
         },
         reasoningId: () => reasoningId,
+        startWarningCount: warnings.length,
         textId: () => textId,
         warnings,
       };
 
       try {
         abortSignal?.addEventListener("abort", onAbort, { once: true });
-        controller.enqueue({ type: "stream-start", warnings });
+        controller.enqueue({ type: "stream-start", warnings: warnings.slice() });
         for await (const event of handle) {
           if (isAborted(abortSignal)) {
             throw new CancelledError();
@@ -293,7 +295,7 @@ function pumpHandle(
           if (isAborted(abortSignal)) {
             throw new CancelledError();
           }
-          emitMissingTurnEnded(controller, closeReasoning, closeText, warnings);
+          emitMissingTurnEnded(controller, closeReasoning, closeText, warnings, ctx.startWarningCount);
         }
         closeStream();
       } catch (error) {
@@ -302,7 +304,7 @@ function pumpHandle(
           return;
         }
         if (isMissingTurnEnded(error) && !finished && !isAborted(abortSignal)) {
-          emitMissingTurnEnded(controller, closeReasoning, closeText, warnings);
+          emitMissingTurnEnded(controller, closeReasoning, closeText, warnings, ctx.startWarningCount);
           closeStream();
           return;
         }
@@ -335,6 +337,7 @@ function applyEvent(
     nextTextId: () => string;
     onFinish: () => void;
     reasoningId: () => string | undefined;
+    startWarningCount: number;
     textId: () => string | undefined;
     warnings: SharedV3Warning[];
   },
@@ -367,11 +370,7 @@ function applyEvent(
       ctx.closeReasoning();
       ctx.closeText();
       ctx.onFinish();
-      ctx.controller.enqueue({
-        type: "finish",
-        usage: mapUsage(event.usage),
-        finishReason: { unified: "stop", raw: "turn_ended" },
-      });
+      enqueueFinish(ctx.controller, mapUsage(event.usage), { unified: "stop", raw: "turn_ended" }, ctx.warnings, ctx.startWarningCount);
       break;
     case "mcp_args":
       finishMcpArgs(event, ctx);
@@ -401,6 +400,7 @@ function finishMcpArgs(
     closeText: () => void;
     controller: ReadableStreamDefaultController<LanguageModelV3StreamPart>;
     onFinish: () => void;
+    startWarningCount: number;
     warnings: SharedV3Warning[];
   },
 ): void {
@@ -421,11 +421,7 @@ function finishMcpArgs(
     input: event.argsJson,
   });
   ctx.onFinish();
-  ctx.controller.enqueue({
-    type: "finish",
-    usage: mapUsage(),
-    finishReason: { unified: "tool-calls", raw: "mcp_args" },
-  });
+  enqueueFinish(ctx.controller, mapUsage(), { unified: "tool-calls", raw: "mcp_args" }, ctx.warnings, ctx.startWarningCount);
   ctx.abortHandle();
 }
 
@@ -434,16 +430,13 @@ function emitMissingTurnEnded(
   closeReasoning: () => void,
   closeText: () => void,
   warnings: SharedV3Warning[],
+  startWarningCount: number,
 ): void {
   closeReasoning();
   closeText();
   const warning: SharedV3Warning = { type: "other", message: MISSING_TURN_ENDED };
   warnings.push(warning);
-  controller.enqueue({
-    type: "finish",
-    usage: mapUsage(),
-    finishReason: { unified: "other", raw: MISSING_TURN_ENDED },
-  });
+  enqueueFinish(controller, mapUsage(), { unified: "other", raw: MISSING_TURN_ENDED }, warnings, startWarningCount);
 }
 
 function mapUsage(usage: UsageCounts = {}): LanguageModelV3Usage {
@@ -460,6 +453,46 @@ function mapUsage(usage: UsageCounts = {}): LanguageModelV3Usage {
       reasoning: usage.reasoningTokens,
     },
   };
+}
+
+function enqueueFinish(
+  controller: ReadableStreamDefaultController<LanguageModelV3StreamPart>,
+  usage: LanguageModelV3Usage,
+  finishReason: LanguageModelV3FinishReason,
+  warnings: SharedV3Warning[],
+  startWarningCount: number,
+): void {
+  const late = warnings.slice(startWarningCount);
+  controller.enqueue({
+    type: "finish",
+    usage,
+    finishReason,
+    ...(late.length === 0
+      ? {}
+      : { providerMetadata: { cursor: { warnings: late as unknown as Array<Record<string, string>> } } }),
+  });
+}
+
+function warningsFromFinish(part: Extract<LanguageModelV3StreamPart, { type: "finish" }>): SharedV3Warning[] {
+  const raw = part.providerMetadata?.cursor?.warnings;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter(isSharedWarning);
+}
+
+function isSharedWarning(value: unknown): value is SharedV3Warning {
+  if (typeof value !== "object" || value === null || !("type" in value)) {
+    return false;
+  }
+  const type = value.type;
+  if (type === "other" && "message" in value && typeof value.message === "string") {
+    return true;
+  }
+  if ((type === "unsupported" || type === "compatibility") && "feature" in value && typeof value.feature === "string") {
+    return true;
+  }
+  return false;
 }
 
 function isAborted(signal: AbortSignal | undefined): boolean {

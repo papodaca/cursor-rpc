@@ -533,13 +533,40 @@ describe("stream mapping", () => {
     const finish = finishes(collected.parts);
     expect(finish).toHaveLength(1);
     expect(finish[0]?.finishReason.unified).toBe("other");
-    const warningSources = collected.parts
+    const startWarnings = collected.parts
       .filter((part): part is Extract<LanguageModelV3StreamPart, { type: "stream-start" }> => part.type === "stream-start")
       .flatMap((part) => part.warnings);
     expect(
-      warningSources.some(
+      startWarnings.some(
         (warning) =>
           warning.type === "other" && /turn_ended|turn ended|missing/i.test(warning.message),
+      ),
+    ).toBe(false);
+    const finishWarnings = finish.flatMap((part) => {
+      const raw = part.providerMetadata?.cursor?.warnings;
+      return Array.isArray(raw) ? raw : [];
+    });
+    expect(
+      finishWarnings.some(
+        (warning) =>
+          typeof warning === "object" &&
+          warning !== null &&
+          "type" in warning &&
+          warning.type === "other" &&
+          "message" in warning &&
+          typeof warning.message === "string" &&
+          /turn_ended|turn ended|missing/i.test(warning.message),
+      ),
+    ).toBe(true);
+  });
+
+  it("doGenerate includes late missing-turn_ended warnings", async () => {
+    const model = modelWithEvents([{ type: "text_delta", text: "partial" }]);
+    const generated = await model.doGenerate({ prompt: [user("hi")] });
+    expect(generated.finishReason.unified).toBe("other");
+    expect(
+      generated.warnings.some(
+        (warning) => warning.type === "other" && /turn_ended|turn ended|missing/i.test(warning.message),
       ),
     ).toBe(true);
   });
