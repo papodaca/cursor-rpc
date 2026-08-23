@@ -1,5 +1,6 @@
-import { UnsupportedFunctionalityError, type LanguageModelV3, type LanguageModelV3CallOptions } from "@ai-sdk/provider";
+import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provider";
 import type { CursorRpcClient } from "cursor-rpc";
+import { consumeCursorStream, streamCursorRun, toProviderError } from "./stream.js";
 
 export class CursorLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = "v3" as const;
@@ -14,19 +15,18 @@ export class CursorLanguageModel implements LanguageModelV3 {
     this.#getClient = options.getClient;
   }
 
-  async doGenerate(_options: LanguageModelV3CallOptions): Promise<never> {
-    this.#getClient();
-    throw new UnsupportedFunctionalityError({
-      functionality: "doGenerate",
-      message: "doGenerate is not implemented",
-    });
+  async doGenerate(options: LanguageModelV3CallOptions) {
+    const { stream } = await this.doStream(options);
+    return consumeCursorStream(stream);
   }
 
-  async doStream(_options: LanguageModelV3CallOptions): Promise<never> {
-    this.#getClient();
-    throw new UnsupportedFunctionalityError({
-      functionality: "doStream",
-      message: "doStream is not implemented",
-    });
+  async doStream(options: LanguageModelV3CallOptions) {
+    let client: CursorRpcClient;
+    try {
+      client = this.#getClient();
+    } catch (error) {
+      throw toProviderError(error);
+    }
+    return streamCursorRun({ client, modelId: this.modelId, call: options });
   }
 }

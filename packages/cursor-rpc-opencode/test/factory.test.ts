@@ -1,5 +1,6 @@
 import { inspect } from "node:util";
-import { AuthenticationError, createClient } from "cursor-rpc";
+import { APICallError } from "@ai-sdk/provider";
+import { createClient, type CursorRpcClient, type RunHandle } from "cursor-rpc";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCursor } from "../src/index.ts";
 
@@ -20,6 +21,23 @@ function failingFetch(): typeof fetch {
   };
 }
 
+function fakeCompletingClient(): CursorRpcClient {
+  const handle = (): RunHandle => ({
+    async *[Symbol.asyncIterator]() {
+      yield { type: "text_delta", text: "ok" };
+      yield { type: "turn_ended", usage: { inputTokens: 1, outputTokens: 1 } };
+    },
+    wait: async () => ({ text: "ok", usage: { inputTokens: 1, outputTokens: 1 }, events: [] }),
+    abort: () => undefined,
+    conversationHistory: () => ({ messages: [] }) as ReturnType<RunHandle["conversationHistory"]>,
+  });
+  return {
+    close: () => undefined,
+    run: async () => handle(),
+    models: async () => ({ models: [], aliasMap: new Map() }),
+  };
+}
+
 function assertNoSecrets(value: unknown): void {
   const text = inspect(value, { depth: 8, getters: true });
   expect(text).not.toMatch(SECRET_NAMES);
@@ -27,7 +45,7 @@ function assertNoSecrets(value: unknown): void {
 
 describe("createCursor factory", () => {
   beforeEach(() => {
-    vi.mocked(createClient).mockClear();
+    vi.mocked(createClient).mockReset();
   });
 
   it("exports createCursor as the only create* function", async () => {
@@ -43,11 +61,11 @@ describe("createCursor factory", () => {
     expect(model.specificationVersion).toBe("v3");
   });
 
-  it("throws AuthenticationError without fetch when credentials are missing", async () => {
+  it("fails closed without fetch when credentials are missing", async () => {
     const fetch = vi.fn(failingFetch());
     const model = createCursor({ env: {}, fetch }).languageModel("x");
-    await expect(model.doGenerate({ prompt: [] })).rejects.toBeInstanceOf(AuthenticationError);
-    await expect(model.doStream({ prompt: [] })).rejects.toBeInstanceOf(AuthenticationError);
+    await expect(model.doGenerate({ prompt: [] })).rejects.toBeInstanceOf(APICallError);
+    await expect(model.doStream({ prompt: [] })).rejects.toBeInstanceOf(APICallError);
     expect(fetch).not.toHaveBeenCalled();
     expect(vi.mocked(createClient)).toHaveBeenCalled();
     const error = await model.doGenerate({ prompt: [] }).catch((caught: unknown) => caught);
@@ -55,9 +73,10 @@ describe("createCursor factory", () => {
     expect(String(error)).not.toContain("CURSOR_API_KEY");
   });
 
-  it("does not leak credential names or values from not-implemented generate errors", async () => {
+  it("does not leak credential names or values from generate or stream results", async () => {
     const apiKey = "key_leaky_factory_secret";
     const fetch = vi.fn(failingFetch());
+    vi.mocked(createClient).mockImplementation(() => fakeCompletingClient());
     const model = createCursor({
       apiKey,
       env: {},
@@ -67,16 +86,24 @@ describe("createCursor factory", () => {
         Cookie: "session=leaked",
       },
     }).languageModel("x");
-    const generateError = await model.doGenerate({ prompt: [] }).catch((caught: unknown) => caught);
-    const streamError = await model.doStream({ prompt: [] }).catch((caught: unknown) => caught);
-    expect(generateError).toBeInstanceOf(Error);
-    expect(streamError).toBeInstanceOf(Error);
-    expect(String(generateError)).toMatch(/not implemented/i);
-    expect(String(streamError)).toMatch(/not implemented/i);
-    assertNoSecrets(generateError);
-    assertNoSecrets(streamError);
-    expect(inspect(generateError)).not.toContain(apiKey);
-    expect(inspect(streamError)).not.toContain(apiKey);
+    const generated = await model.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    });
+    const streamed = await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    });
+    const parts: unknown[] = [];
+    for await (const part of streamed.stream) {
+      parts.push(part);
+    }
+    expect(generated.content).toEqual(expect.arrayContaining([{ type: "text", text: "ok" }]));
+    expect(
+      parts.some((part) => typeof part === "object" && part !== null && "type" in part && part.type === "finish"),
+    ).toBe(true);
+    assertNoSecrets(generated);
+    assertNoSecrets(parts);
+    expect(inspect(generated)).not.toContain(apiKey);
+    expect(inspect(parts)).not.toContain(apiKey);
     expect(fetch).not.toHaveBeenCalled();
   });
 
