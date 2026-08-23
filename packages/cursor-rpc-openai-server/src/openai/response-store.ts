@@ -5,8 +5,33 @@ import { normalizeResponsesDbPath } from "../config.js";
 import { HttpError, openaiError } from "../errors.js";
 
 export const SQLITE_BUSY_TIMEOUT_MS = 5000;
-const SCHEMA_USER_VERSION = 1;
+const SCHEMA_USER_VERSION = 2;
 const MAX_CHAIN_HOPS = 100;
+const LIST_DEFAULT_LIMIT = 20;
+const LIST_MAX_LIMIT = 100;
+const MAX_METADATA_KEYS = 16;
+const MAX_METADATA_KEY_CHARS = 64;
+const MAX_METADATA_VALUE_CHARS = 512;
+
+const RESPONSES_DDL = `CREATE TABLE responses (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
+    previous_response_id TEXT,
+    model TEXT NOT NULL,
+    instructions TEXT,
+    store INTEGER NOT NULL CHECK (store IN (0, 1)),
+    created_at INTEGER NOT NULL,
+    response_json TEXT NOT NULL,
+    transcript_json TEXT NOT NULL
+  )`;
+
+const CHAT_COMPLETIONS_DDL = `CREATE TABLE IF NOT EXISTS chat_completions (
+    id TEXT PRIMARY KEY,
+    created INTEGER,
+    model TEXT,
+    metadata TEXT,
+    body TEXT
+  )`;
 
 export type ResponseStatus = "completed" | "failed";
 
@@ -27,13 +52,67 @@ export type InsertResponseRow = {
   transcript: ResponseTranscript;
 };
 
+export type InsertChatCompletionRow = {
+  id: string;
+  created: number;
+  model: string;
+  metadata: Record<string, string> | null;
+  body: Record<string, unknown>;
+};
+
+export type ListChatCompletionsQuery = {
+  after?: string;
+  limit?: number;
+  model?: string;
+  order?: string;
+  metadata?: Record<string, string>;
+};
+
+export type ChatCompletionListPage = {
+  object: "list";
+  data: Record<string, unknown>[];
+  first_id: string | null;
+  last_id: string | null;
+  has_more: boolean;
+};
+
 export type ResponseStore = {
   readonly path: string;
   insert(row: InsertResponseRow): void;
   get(id: string): Record<string, unknown> | undefined;
   loadAncestorChain(previousResponseId: string): ResponseTranscript[];
+  insertChat(row: InsertChatCompletionRow): void;
+  getChat(id: string): Record<string, unknown> | undefined;
+  listChat(query?: ListChatCompletionsQuery): ChatCompletionListPage;
+  updateChatMetadata(id: string, metadata: Record<string, string> | null): Record<string, unknown> | undefined;
+  deleteChat(id: string): boolean;
   close(): void;
 };
+
+export function buildListChatCompletionsSql(options: {
+  metadataFilterCount: number;
+  hasAfter: boolean;
+  hasModel: boolean;
+  order: "asc" | "desc";
+}): string {
+  const direction = options.order === "desc" ? "DESC" : "ASC";
+  const cmp = options.order === "desc" ? "<" : ">";
+  const clauses = ["SELECT id, metadata, body FROM chat_completions WHERE 1 = 1"];
+  if (options.hasModel) {
+    clauses.push("AND model = ?");
+  }
+  for (let i = 0; i < options.metadataFilterCount; i += 1) {
+    clauses.push(
+      "AND EXISTS (SELECT 1 FROM json_each(metadata) WHERE json_each.key = ? AND json_each.value = ?)",
+    );
+  }
+  if (options.hasAfter) {
+    clauses.push(`AND (created ${cmp} ? OR (created = ? AND id ${cmp} ?))`);
+  }
+  clauses.push(`ORDER BY created ${direction}, id ${direction}`);
+  clauses.push("LIMIT ?");
+  return clauses.join(" ");
+}
 
 type StoredRow = {
   status: ResponseStatus;
@@ -66,6 +145,13 @@ export function openResponseStore(dbPath: string): ResponseStore {
   const getChainStmt = db.prepare(
     "SELECT status, previous_response_id, transcript_json FROM responses WHERE id = ?",
   );
+  const insertChatStmt = db.prepare(
+    "INSERT INTO chat_completions (id, created, model, metadata, body) VALUES (?, ?, ?, ?, ?)",
+  );
+  const getChatStmt = db.prepare("SELECT metadata, body FROM chat_completions WHERE id = ?");
+  const getChatCursorStmt = db.prepare("SELECT created, id FROM chat_completions WHERE id = ?");
+  const updateChatMetadataStmt = db.prepare("UPDATE chat_completions SET metadata = ? WHERE id = ?");
+  const deleteChatStmt = db.prepare("DELETE FROM chat_completions WHERE id = ?");
 
   let closed = false;
   return {
@@ -113,6 +199,70 @@ export function openResponseStore(dbPath: string): ResponseStore {
       }
       return collected.reverse();
     },
+    insertChat(row: InsertChatCompletionRow): void {
+      insertChatStmt.run(row.id, row.created, row.model, serializeMetadata(row.metadata), JSON.stringify(row.body));
+    },
+    getChat(id: string): Record<string, unknown> | undefined {
+      const row = getChatStmt.get(id) as ChatStoredRow | undefined;
+      if (row === undefined) {
+        return undefined;
+      }
+      return overlayChatRow(row);
+    },
+    listChat(query: ListChatCompletionsQuery = {}): ChatCompletionListPage {
+      const limit = resolveListLimit(query.limit);
+      const order = resolveListOrder(query.order);
+      const metadataFilters = Object.entries(query.metadata ?? {});
+      const hasModel = query.model !== undefined;
+      let afterCreated: number | undefined;
+      let afterId: string | undefined;
+      if (query.after !== undefined) {
+        const cursor = getChatCursorStmt.get(query.after) as { created: number; id: string } | undefined;
+        if (cursor === undefined) {
+          throw paramError("after", "Invalid after");
+        }
+        afterCreated = cursor.created;
+        afterId = cursor.id;
+      }
+      const sql = buildListChatCompletionsSql({
+        metadataFilterCount: metadataFilters.length,
+        hasAfter: afterId !== undefined,
+        hasModel,
+        order,
+      });
+      const params: Array<string | number> = [];
+      if (hasModel && query.model !== undefined) {
+        params.push(query.model);
+      }
+      for (const [key, value] of metadataFilters) {
+        params.push(key, value);
+      }
+      if (afterCreated !== undefined && afterId !== undefined) {
+        params.push(afterCreated, afterCreated, afterId);
+      }
+      params.push(limit + 1);
+      const rows = db.prepare(sql).all(...params) as ChatStoredRow[];
+      const hasMore = rows.length > limit;
+      const page = rows.slice(0, limit).map((row) => overlayChatRow(row));
+      return {
+        object: "list",
+        data: page,
+        first_id: page[0]?.id === undefined ? null : String(page[0].id),
+        last_id: page.length === 0 ? null : String(page[page.length - 1]?.id),
+        has_more: hasMore,
+      };
+    },
+    updateChatMetadata(id: string, metadata: Record<string, string> | null): Record<string, unknown> | undefined {
+      const result = updateChatMetadataStmt.run(serializeMetadata(metadata), id);
+      if (result.changes === 0) {
+        return undefined;
+      }
+      const row = getChatStmt.get(id) as ChatStoredRow | undefined;
+      return row === undefined ? undefined : overlayChatRow(row);
+    },
+    deleteChat(id: string): boolean {
+      return deleteChatStmt.run(id).changes > 0;
+    },
     close(): void {
       if (closed) {
         return;
@@ -129,21 +279,97 @@ function applySchema(db: DatabaseSync): void {
   if (version === SCHEMA_USER_VERSION) {
     return;
   }
-  if (version !== 0) {
-    throw new Error(`unsupported responses database user_version ${version}`);
+  if (version === 0) {
+    runInTransaction(db, () => {
+      db.exec(RESPONSES_DDL);
+      db.exec(CHAT_COMPLETIONS_DDL);
+      db.exec(`PRAGMA user_version = ${SCHEMA_USER_VERSION}`);
+    });
+    return;
   }
-  db.exec(`CREATE TABLE responses (
-    id TEXT PRIMARY KEY,
-    status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
-    previous_response_id TEXT,
-    model TEXT NOT NULL,
-    instructions TEXT,
-    store INTEGER NOT NULL CHECK (store IN (0, 1)),
-    created_at INTEGER NOT NULL,
-    response_json TEXT NOT NULL,
-    transcript_json TEXT NOT NULL
-  )`);
-  db.exec(`PRAGMA user_version = ${SCHEMA_USER_VERSION}`);
+  if (version === 1) {
+    runInTransaction(db, () => {
+      db.exec(CHAT_COMPLETIONS_DDL);
+      db.exec(`PRAGMA user_version = ${SCHEMA_USER_VERSION}`);
+    });
+    return;
+  }
+  throw new Error(`unsupported responses database user_version ${version}`);
+}
+
+function runInTransaction(db: DatabaseSync, work: () => void): void {
+  db.exec("BEGIN");
+  try {
+    work();
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+type ChatStoredRow = {
+  id?: string;
+  metadata: string;
+  body: string;
+};
+
+function overlayChatRow(row: ChatStoredRow): Record<string, unknown> {
+  const body = JSON.parse(row.body) as Record<string, unknown>;
+  return {
+    ...body,
+    metadata: JSON.parse(row.metadata) as unknown,
+  };
+}
+
+function serializeMetadata(metadata: Record<string, string> | null): string {
+  const value = metadata === null ? {} : metadata;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw paramError("metadata", "Invalid metadata");
+  }
+  const keys = Object.keys(value);
+  if (keys.length > MAX_METADATA_KEYS) {
+    throw paramError("metadata", "Invalid metadata");
+  }
+  for (const key of keys) {
+    const item = value[key];
+    if (key.length > MAX_METADATA_KEY_CHARS || typeof item !== "string" || item.length > MAX_METADATA_VALUE_CHARS) {
+      throw paramError("metadata", "Invalid metadata");
+    }
+  }
+  return JSON.stringify(value);
+}
+
+function resolveListLimit(limit: number | undefined): number {
+  if (limit === undefined) {
+    return LIST_DEFAULT_LIMIT;
+  }
+  if (!Number.isInteger(limit) || limit <= 0 || limit > LIST_MAX_LIMIT) {
+    throw paramError("limit", "Invalid limit");
+  }
+  return limit;
+}
+
+function resolveListOrder(order: string | undefined): "asc" | "desc" {
+  if (order === undefined) {
+    return "asc";
+  }
+  if (order === "asc" || order === "desc") {
+    return order;
+  }
+  throw paramError("order", "Invalid order");
+}
+
+function paramError(param: string, message: string): HttpError {
+  return new HttpError(
+    400,
+    openaiError({
+      message,
+      type: "invalid_request_error",
+      param,
+      code: "invalid_request_error",
+    }),
+  );
 }
 
 function prepareSecretFile(filePath: string): void {

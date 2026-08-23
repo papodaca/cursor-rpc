@@ -8,7 +8,12 @@ import { AuthenticationError } from "cursor-rpc";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resolveResponsesDbPath } from "../src/config.ts";
 import { HttpError } from "../src/errors.ts";
-import { openResponseStore, type InsertResponseRow, type ResponseStore } from "../src/openai/response-store.ts";
+import {
+  buildListChatCompletionsSql,
+  openResponseStore,
+  type InsertResponseRow,
+  type ResponseStore,
+} from "../src/openai/response-store.ts";
 import { startServer, type StartedServer } from "../src/server.ts";
 import { authHeaders, INBOUND_KEY, startTestServer, tempResponsesDbPath } from "./helpers.ts";
 
@@ -97,6 +102,153 @@ function textColumns(dbPath: string): string {
     return JSON.stringify(rows);
   } finally {
     db.close();
+  }
+}
+
+const V1_RESPONSES_DDL = `CREATE TABLE responses (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
+    previous_response_id TEXT,
+    model TEXT NOT NULL,
+    instructions TEXT,
+    store INTEGER NOT NULL CHECK (store IN (0, 1)),
+    created_at INTEGER NOT NULL,
+    response_json TEXT NOT NULL,
+    transcript_json TEXT NOT NULL
+  )`;
+
+const CHAT_COMPLETIONS_DDL = `CREATE TABLE chat_completions (
+    id TEXT PRIMARY KEY,
+    created INTEGER,
+    model TEXT,
+    metadata TEXT,
+    body TEXT
+  )`;
+
+function chmodSecret(dbPath: string): void {
+  chmodSync(dbPath, 0o600);
+  for (const side of [`${dbPath}-wal`, `${dbPath}-shm`]) {
+    if (existsSync(side)) {
+      chmodSync(side, 0o600);
+    }
+  }
+}
+
+function withWritableDb(dbPath: string, run: (db: DatabaseSync) => void): void {
+  writeFileSync(dbPath, "", { mode: 0o600 });
+  chmodSecret(dbPath);
+  const db = new DatabaseSync(dbPath);
+  try {
+    run(db);
+  } finally {
+    db.close();
+  }
+  chmodSecret(dbPath);
+}
+
+function writeV1Fixture(
+  dbPath: string,
+  options: { responseId?: string; alreadyHasChatTable?: boolean } = {},
+): string {
+  const id = options.responseId ?? respId();
+  const projection = completedProjection(id);
+  withWritableDb(dbPath, (db) => {
+    db.exec(V1_RESPONSES_DDL);
+    if (options.alreadyHasChatTable) {
+      db.exec(CHAT_COMPLETIONS_DDL);
+    }
+    db.exec("PRAGMA user_version = 1");
+    db.prepare(
+      `INSERT INTO responses (
+        id, status, previous_response_id, model, instructions, store, created_at, response_json, transcript_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id,
+      "completed",
+      null,
+      "composer-2",
+      "be brief",
+      1,
+      1_700_000_000,
+      JSON.stringify(projection),
+      JSON.stringify({ user: "hello", assistant: "hi" }),
+    );
+  });
+  return id;
+}
+
+function readUserVersion(dbPath: string): number {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
+    return row.user_version;
+  } finally {
+    db.close();
+  }
+}
+
+function listUserTables(dbPath: string): string[] {
+  const db = new DatabaseSync(dbPath, { readOnly: true });
+  try {
+    return (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{
+      name: string;
+    }>).map((row) => row.name);
+  } finally {
+    db.close();
+  }
+}
+
+function chatcmplId(): string {
+  return `chatcmpl-${randomBytes(16).toString("hex")}`;
+}
+
+function chatBody(id: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    object: "chat.completion",
+    created: 1_700_000_000,
+    model: "composer-2",
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: "hi" },
+        finish_reason: "stop",
+      },
+    ],
+    metadata: { stale: "from-body" },
+    ...extra,
+  };
+}
+
+function insertChatRow(
+  overrides: Partial<{
+    id: string;
+    created: number;
+    model: string;
+    metadata: Record<string, string> | null;
+    body: Record<string, unknown>;
+  }> = {},
+) {
+  const id = overrides.id ?? chatcmplId();
+  return {
+    id,
+    created: overrides.created ?? 1_700_000_000,
+    model: overrides.model ?? "composer-2",
+    metadata: overrides.metadata === undefined ? { team: "alpha" } : overrides.metadata,
+    body: overrides.body ?? chatBody(id),
+  };
+}
+
+function expectParamError(run: () => void, param: string): void {
+  try {
+    run();
+    expect.fail(`expected 400 param ${param}`);
+  } catch (error) {
+    expect(error).toBeInstanceOf(HttpError);
+    const http = error as HttpError;
+    expect(http.status).toBe(400);
+    expect(http.body.error.param).toBe(param);
+    expect(http.body.error.type).toBe("invalid_request_error");
   }
 }
 
@@ -417,10 +569,10 @@ describe("response store and GET retrieve", () => {
     expectPreviousResponseIdError(() => store.loadAncestorChain(self));
   });
 
-  it("refuses to open a file with user_version = 2", () => {
+  it("refuses to open a file with user_version = 3", () => {
     const dbPath = tempResponsesDbPath();
     const db = new DatabaseSync(dbPath);
-    db.exec("PRAGMA user_version = 2");
+    db.exec("PRAGMA user_version = 3");
     db.close();
     chmodSync(dbPath, 0o600);
     for (const side of [`${dbPath}-wal`, `${dbPath}-shm`]) {
@@ -484,5 +636,217 @@ describe("response store and GET retrieve", () => {
     expect(body).not.toContain(plantedStack);
     expect(body).not.toContain(plantedCause);
     expect(JSON.parse(body)).toEqual(projection);
+  });
+
+  it("opens an empty file as user_version 2 and still inserts plus GETs a response", async () => {
+    const dbPath = tempResponsesDbPath();
+    const id = respId();
+    const projection = completedProjection(id);
+    const store = openStore(dbPath);
+    store.insert(insertRow({ id, response: projection }));
+    store.close();
+
+    expect(readUserVersion(dbPath)).toBe(2);
+    expect(listUserTables(dbPath)).toEqual(expect.arrayContaining(["chat_completions", "responses"]));
+
+    const { url } = await startWithDb(dbPath);
+    const response = await fetch(`${url}/v1/responses/${id}`, { headers: authHeaders() });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(projection);
+  });
+
+  it("migrates a v1 fixture to user_version 2 and GET of the existing resp_ is 200 after restart", async () => {
+    const dbPath = tempResponsesDbPath();
+    const id = writeV1Fixture(dbPath);
+    expect(readUserVersion(dbPath)).toBe(1);
+    expect(listUserTables(dbPath)).not.toContain("chat_completions");
+
+    const first = await startWithDb(dbPath);
+    const firstGet = await fetch(`${first.url}/v1/responses/${id}`, { headers: authHeaders() });
+    expect(firstGet.status).toBe(200);
+    expect(await firstGet.json()).toEqual(completedProjection(id));
+    await first.close();
+    expect(readUserVersion(dbPath)).toBe(2);
+    expect(listUserTables(dbPath)).toEqual(expect.arrayContaining(["chat_completions", "responses"]));
+
+    const second = await startWithDb(dbPath);
+    const secondGet = await fetch(`${second.url}/v1/responses/${id}`, { headers: authHeaders() });
+    expect(secondGet.status).toBe(200);
+    expect(await secondGet.json()).toEqual(completedProjection(id));
+  });
+
+  it("migrates a v1 file that already has chat_completions, sets user_version 2, and Responses GET still works", async () => {
+    const dbPath = tempResponsesDbPath();
+    const id = writeV1Fixture(dbPath, { alreadyHasChatTable: true });
+    expect(readUserVersion(dbPath)).toBe(1);
+    expect(listUserTables(dbPath)).toEqual(expect.arrayContaining(["chat_completions", "responses"]));
+
+    const store = openStore(dbPath);
+    expect(store.get(id)).toEqual(completedProjection(id));
+    store.close();
+    expect(readUserVersion(dbPath)).toBe(2);
+
+    const { url } = await startWithDb(dbPath);
+    const response = await fetch(`${url}/v1/responses/${id}`, { headers: authHeaders() });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(completedProjection(id));
+  });
+
+  it("commits two overlapping chat inserts of distinct ids", () => {
+    const store = openStore();
+    const first = insertChatRow({ created: 10, metadata: { n: "1" } });
+    const second = insertChatRow({ created: 11, metadata: { n: "2" } });
+    store.insertChat(first);
+    store.insertChat(second);
+    expect(store.getChat(first.id)).toMatchObject({ id: first.id, metadata: { n: "1" } });
+    expect(store.getChat(second.id)).toMatchObject({ id: second.id, metadata: { n: "2" } });
+  });
+
+  it("round-trips hostile quotes and semicolons in a chat id as bound data", () => {
+    const store = openStore();
+    const hostileId = `chatcmpl_it's";--drop`;
+    const row = insertChatRow({
+      id: hostileId,
+      metadata: { note: `val'; DROP TABLE chat_completions;--` },
+      body: chatBody(hostileId, { choices: [{ index: 0, message: { role: "assistant", content: `ok";--` } }] }),
+    });
+    store.insertChat(row);
+    expect(store.getChat(hostileId)).toMatchObject({
+      id: hostileId,
+      metadata: { note: `val'; DROP TABLE chat_completions;--` },
+    });
+    expect(store.getChat(hostileId)?.choices).toEqual([
+      { index: 0, message: { role: "assistant", content: `ok";--` } },
+    ]);
+    expect(store.deleteChat(hostileId)).toBe(true);
+    expect(store.getChat(hostileId)).toBeUndefined();
+  });
+
+  it("keeps list SQL shape fixed for hostile metadata keys and binds key/value", () => {
+    const store = openStore();
+    const match = insertChatRow({
+      created: 1,
+      metadata: { team: "alpha" },
+    });
+    const other = insertChatRow({
+      created: 2,
+      metadata: { team: "beta" },
+    });
+    store.insertChat(match);
+    store.insertChat(other);
+
+    const hostileKey = `team'] OR 1=1;--`;
+    const hostileValue = `alpha' OR '1'='1`;
+    const listSql = buildListChatCompletionsSql({
+      metadataFilterCount: 1,
+      hasAfter: false,
+      hasModel: false,
+      order: "asc",
+    });
+    expect(listSql).toBe(
+      buildListChatCompletionsSql({
+        metadataFilterCount: 1,
+        hasAfter: false,
+        hasModel: false,
+        order: "asc",
+      }),
+    );
+    expect(listSql).toContain("json_each");
+    expect(listSql).not.toMatch(/json_extract/i);
+    expect(listSql).not.toContain(hostileKey);
+    expect(listSql).not.toContain(hostileValue);
+    const injected = store.listChat({ metadata: { [hostileKey]: "alpha" } });
+    const boundMiss = store.listChat({ metadata: { team: hostileValue } });
+    const boundHit = store.listChat({ metadata: { team: "alpha" } });
+
+    expect(injected).toEqual({
+      object: "list",
+      data: [],
+      first_id: null,
+      last_id: null,
+      has_more: false,
+    });
+    expect(boundMiss.data.map((row) => row.id)).toEqual([]);
+    expect(boundHit.data.map((row) => row.id)).toEqual([match.id]);
+    expect(store.getChat(match.id)).toBeDefined();
+    expect(store.getChat(other.id)).toBeDefined();
+    expect(store.get(respId())).toBeUndefined();
+  });
+
+  it("lists chat rows with default limit 20, bound filters, and metadata overlay from the column", () => {
+    const store = openStore();
+    expect(store.listChat()).toEqual({
+      object: "list",
+      data: [],
+      first_id: null,
+      last_id: null,
+      has_more: false,
+    });
+
+    const ids: string[] = [];
+    for (let i = 0; i < 21; i += 1) {
+      const id = chatcmplId();
+      const row = insertChatRow({
+        id,
+        created: 100 + i,
+        metadata: { team: i % 2 === 0 ? "even" : "odd", i: String(i) },
+        body: chatBody(id, { created: 100 + i, metadata: { stale: "body" } }),
+      });
+      ids.push(row.id);
+      store.insertChat(row);
+    }
+
+    const firstPage = store.listChat();
+    expect(firstPage.data).toHaveLength(20);
+    expect(firstPage.first_id).toBe(ids[0]);
+    expect(firstPage.last_id).toBe(ids[19]);
+    expect(firstPage.has_more).toBe(true);
+    expect(firstPage.data[0]?.metadata).toEqual({ team: "even", i: "0" });
+    expect(firstPage.data[0]?.id).toBe(ids[0]);
+
+    const after = store.listChat({ after: ids[19] });
+    expect(after.data.map((row) => row.id)).toEqual([ids[20]]);
+    expect(after.has_more).toBe(false);
+
+    const evens = store.listChat({ metadata: { team: "even" }, limit: 5 });
+    expect(evens.data).toHaveLength(5);
+    expect(evens.data.every((row) => (row.metadata as { team: string }).team === "even")).toBe(true);
+    expect(evens.has_more).toBe(true);
+
+    const desc = store.listChat({ order: "desc", limit: 2 });
+    expect(desc.data.map((row) => row.id)).toEqual([ids[20], ids[19]]);
+  });
+
+  it("rejects invalid list limit, order, and unknown after", () => {
+    const store = openStore();
+    const row = insertChatRow();
+    store.insertChat(row);
+    expectParamError(() => store.listChat({ limit: 0 }), "limit");
+    expectParamError(() => store.listChat({ limit: -1 }), "limit");
+    expectParamError(() => store.listChat({ limit: 1.5 }), "limit");
+    expectParamError(() => store.listChat({ limit: 101 }), "limit");
+    expectParamError(() => store.listChat({ limit: "20" as unknown as number }), "limit");
+    expectParamError(() => store.listChat({ order: "drop-table" }), "order");
+    expectParamError(() => store.listChat({ after: "chatcmpl-missing" }), "after");
+  });
+
+  it("updates only the metadata column and overlays it on GET", () => {
+    const store = openStore();
+    const row = insertChatRow({
+      metadata: { team: "alpha" },
+      body: chatBody("pending", { choices: [{ index: 0, message: { role: "assistant", content: "keep" } }] }),
+    });
+    store.insertChat({ ...row, body: { ...row.body, id: row.id } });
+    const updated = store.updateChatMetadata(row.id, { team: "beta" });
+    expect(updated).toMatchObject({
+      id: row.id,
+      metadata: { team: "beta" },
+      choices: [{ index: 0, message: { role: "assistant", content: "keep" } }],
+    });
+    expect(store.getChat(row.id)?.metadata).toEqual({ team: "beta" });
+    const cleared = store.updateChatMetadata(row.id, null);
+    expect(cleared?.metadata).toEqual({});
+    expect(store.updateChatMetadata("chatcmpl-missing", { team: "nope" })).toBeUndefined();
+    expect(store.deleteChat("chatcmpl-missing")).toBe(false);
   });
 });
