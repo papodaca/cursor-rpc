@@ -26,6 +26,7 @@ import { mapPrompt } from "./prompt.js";
 type ProbeRunMode = NonNullable<ClientRunOptions["mode"]>;
 
 const MISSING_TURN_ENDED = "stream ended without turn_ended";
+const OPENCODE_STALL_MS = 180_000;
 
 const UNSUPPORTED_SAMPLING = [
   "temperature",
@@ -41,11 +42,14 @@ const UNSUPPORTED_SAMPLING = [
 
 export function toProviderError(error: unknown): APICallError {
   const wrapped = error instanceof CursorRpcError ? error : CursorRpcError.from(error);
+  const stalled = wrapped instanceof StreamError && wrapped.message === "stall_detector";
   return new APICallError({
-    message: wrapped.message,
+    message: stalled
+      ? "Cursor sent no stream activity before the stall timeout. The model may still be thinking; retrying starts a new Run."
+      : wrapped.message,
     url: "cursor-rpc",
     requestBodyValues: {},
-    isRetryable: wrapped.isRetryable,
+    isRetryable: stalled ? false : wrapped.isRetryable,
   });
 }
 
@@ -153,12 +157,11 @@ function clientRunOptions(
   const options: ClientRunOptions = {
     prompt: mapped.prompt,
     modelId,
+    stallMs: OPENCODE_STALL_MS,
+    excludeWorkspaceContext: false,
   };
   if (call.abortSignal !== undefined) {
     options.signal = call.abortSignal;
-  }
-  if (mapped.customSystemPrompt !== undefined) {
-    options.customSystemPrompt = mapped.customSystemPrompt;
   }
   if (mapped.conversationHistory !== undefined) {
     options.conversationHistory = mapped.conversationHistory;

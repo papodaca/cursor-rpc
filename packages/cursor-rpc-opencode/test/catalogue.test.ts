@@ -5,6 +5,7 @@ import type { CursorRpcClient, ModelCatalogue, ModelDetails, RunHandle } from "c
 import { createClient, login } from "cursor-rpc";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TOOLS_SUPPORTED } from "../src/language-model.ts";
+import { plugin as cursorPlugin } from "../src/plugin.ts";
 
 vi.mock("cursor-rpc", async (importOriginal) => {
   const actual = await importOriginal<typeof import("cursor-rpc")>();
@@ -79,12 +80,14 @@ describe("cursorPlugin catalogue overlay", () => {
     vi.mocked(login).mockClear();
   });
 
-  it("exports cursorPlugin (not create*) and createCursor remains the only create* export", async () => {
-    const mod = await import("../src/index.ts");
-    expect(mod.cursorPlugin).toBeDefined();
-    expect(mod.cursorPlugin.name).toBe("cursor-rpc");
-    expect(mod.cursorPlugin.name.startsWith("create")).toBe(false);
-    const createKeys = Object.keys(mod).filter((key) => key.startsWith("create"));
+  it("exports a function plugin (not create*) and createCursor remains the only create* export", async () => {
+    const factory = await import("../src/index.ts");
+    const pluginMod = await import("../src/plugin.ts");
+    expect(typeof pluginMod.plugin).toBe("function");
+    expect(pluginMod.plugin.name.startsWith("create")).toBe(false);
+    expect(pluginMod.plugin()).toEqual({ config: expect.any(Function) });
+    expect("plugin" in factory).toBe(false);
+    const createKeys = Object.keys(factory).filter((key) => key.startsWith("create"));
     expect(createKeys).toEqual(["createCursor"]);
   });
 
@@ -101,9 +104,8 @@ describe("cursorPlugin catalogue overlay", () => {
         ],
       }),
     );
-    const { cursorPlugin } = await import("../src/index.ts");
     const cfg = seedConfig();
-    const result = await cursorPlugin.config(cfg, { apiKey: "key_ok", env: {} });
+    const result = await cursorPlugin().config(cfg, { apiKey: "key_ok", env: {} });
     expect(result.provider?.cursor?.models).toEqual({
       "gpt-5": {
         id: "gpt-5",
@@ -145,8 +147,7 @@ describe("cursorPlugin catalogue overlay", () => {
         ]),
       }),
     );
-    const { cursorPlugin } = await import("../src/index.ts");
-    const result = await cursorPlugin.config(seedConfig(), { apiKey: "key_ok", env: {} });
+    const result = await cursorPlugin().config(seedConfig(), { apiKey: "key_ok", env: {} });
     const models = result.provider?.cursor?.models ?? {};
     expect(Object.keys(models)).toEqual(["composer-2"]);
     expect(models.composer).toBeUndefined();
@@ -157,9 +158,8 @@ describe("cursorPlugin catalogue overlay", () => {
   });
 
   it("leaves the seed in place when credentials are missing", async () => {
-    const { cursorPlugin } = await import("../src/index.ts");
     const cfg = seedConfig();
-    const result = await cursorPlugin.config(cfg, { env: {} });
+    const result = await cursorPlugin().config(cfg, { env: {} });
     expect(result.provider?.cursor?.models?.[SEED_ID]).toEqual({
       name: "Composer 2.5",
       tool_call: true,
@@ -174,9 +174,8 @@ describe("cursorPlugin catalogue overlay", () => {
         throw new Error("transport timeout");
       }),
     );
-    const { cursorPlugin } = await import("../src/index.ts");
     const cfg = seedConfig();
-    await expect(cursorPlugin.config(cfg, { apiKey: "key_ok", env: {} })).resolves.toBe(cfg);
+    await expect(cursorPlugin().config(cfg, { apiKey: "key_ok", env: {} })).resolves.toBe(cfg);
     expect(cfg.provider.cursor.models[SEED_ID]).toEqual({
       name: "Composer 2.5",
       tool_call: true,
@@ -186,9 +185,8 @@ describe("cursorPlugin catalogue overlay", () => {
 
   it("keeps the seed when the live catalogue is empty", async () => {
     vi.mocked(createClient).mockImplementation(() => fakeClient({ models: [], aliasMap: new Map() }));
-    const { cursorPlugin } = await import("../src/index.ts");
     const cfg = seedConfig();
-    const result = await cursorPlugin.config(cfg, { env: { CURSOR_API_KEY: "key_ok" } });
+    const result = await cursorPlugin().config(cfg, { env: { CURSOR_API_KEY: "key_ok" } });
     expect(result.provider?.cursor?.models?.[SEED_ID]).toBeDefined();
     expect(login).not.toHaveBeenCalled();
   });
@@ -197,9 +195,8 @@ describe("cursorPlugin catalogue overlay", () => {
     vi.mocked(createClient).mockImplementation(() => {
       throw new Error("authentication required");
     });
-    const { cursorPlugin } = await import("../src/index.ts");
     const cfg = {};
-    const result = await cursorPlugin.config(cfg, { apiKey: "key_ok", env: {} });
+    const result = await cursorPlugin().config(cfg, { apiKey: "key_ok", env: {} });
     expect(result.provider).toBeUndefined();
     expect(login).not.toHaveBeenCalled();
   });
@@ -212,8 +209,7 @@ describe("cursorPlugin catalogue overlay", () => {
         aliasMap: new Map(),
       }),
     );
-    const { cursorPlugin } = await import("../src/index.ts");
-    const result = await cursorPlugin.config(seedConfig(), { apiKey: "key_ok", env: {} });
+    const result = await cursorPlugin().config(seedConfig(), { apiKey: "key_ok", env: {} });
     expect(result.provider?.cursor?.models?.["gpt-5"]).toEqual({
       id: "gpt-5",
       name: "G5",
@@ -223,6 +219,41 @@ describe("cursorPlugin catalogue overlay", () => {
       capabilities: { tools: true },
     });
   });
+
+  it("overlays a cursor-rpc provider key whose npm points at this package", async () => {
+    vi.mocked(createClient).mockImplementation(() =>
+      fakeClient({
+        models: [catalogueModel({ modelId: "gpt-5", displayName: "GPT-5" })],
+        aliasMap: new Map(),
+      }),
+    );
+    const cfg = {
+      provider: {
+        "cursor-rpc": {
+          npm: "file:///absolute/path/to/packages/cursor-rpc-opencode",
+          models: {
+            [SEED_ID]: { name: "Composer 2.5", tool_call: true },
+          },
+        },
+        cursor: {
+          npm: "cursor-opencode-provider",
+          models: {},
+        },
+      },
+    };
+    const result = await cursorPlugin().config(cfg, { apiKey: "key_ok", env: {} });
+    expect(result.provider?.["cursor-rpc"]?.models).toEqual({
+      "gpt-5": {
+        id: "gpt-5",
+        name: "GPT-5",
+        tool_call: TOOLS_SUPPORTED,
+        reasoning: true,
+        attachment: false,
+        capabilities: { tools: TOOLS_SUPPORTED },
+      },
+    });
+    expect(result.provider?.cursor?.models).toEqual({});
+  });
 });
 
 describe("README install docs", () => {
@@ -230,6 +261,7 @@ describe("README install docs", () => {
     const readme = await readFile(join(dirname(fileURLToPath(import.meta.url)), "../README.md"), "utf8");
     expect(readme).toContain("file://");
     expect(readme).toContain('"plugin"');
+    expect(readme).toContain("plugin.js");
     expect(readme).toContain('"plugins"');
     expect(readme).toContain('"npm"');
     expect(readme).toContain('"package"');

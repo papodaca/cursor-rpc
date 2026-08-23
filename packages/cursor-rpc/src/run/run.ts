@@ -51,6 +51,7 @@ export type RunRequestOptions = {
   maxTokens?: number;
   modelId?: string;
   modelDetails?: ModelDetails;
+  excludeWorkspaceContext?: boolean;
 };
 
 export type RunOptions = {
@@ -127,7 +128,7 @@ export function openingRunRequest(
             ? create(RequestedModelSchema, { modelId: extras.modelId })
             : undefined,
         modelDetails: extras.modelDetails,
-        excludeWorkspaceContext: true,
+        ...(extras.excludeWorkspaceContext === false ? {} : { excludeWorkspaceContext: true }),
         mcpTools:
           mcpTools.length > 0
             ? create(McpToolsSchema, {
@@ -240,6 +241,7 @@ export function runTurn(options: RunOptions): RunHandle {
           maxTokens: options.maxTokens,
           modelId: options.modelId,
           modelDetails: options.modelDetails,
+          excludeWorkspaceContext: options.excludeWorkspaceContext,
         }),
       );
       events.push({ type: "connection", state: "connected" });

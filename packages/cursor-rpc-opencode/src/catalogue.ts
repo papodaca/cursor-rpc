@@ -26,8 +26,8 @@ export type OpenCodeProviderBlock = {
 };
 
 export type OpenCodeConfig = {
-  provider?: { cursor?: OpenCodeProviderBlock };
-  providers?: { cursor?: OpenCodeProviderBlock };
+  provider?: Record<string, OpenCodeProviderBlock | undefined>;
+  providers?: Record<string, OpenCodeProviderBlock | undefined>;
 };
 
 export type CatalogueOverlayOptions = ProviderClientSettings & {
@@ -48,13 +48,6 @@ export async function overlayCursorCatalogue(
   }
   return cfg;
 }
-
-export const cursorPlugin = {
-  name: "cursor-rpc",
-  config: overlayCursorCatalogue,
-};
-
-export { cursorPlugin as plugin };
 
 async function overlayOrKeepSeed(cfg: OpenCodeConfig, options: CatalogueOverlayOptions): Promise<void> {
   const env = resolveEnv(cfg, options);
@@ -109,21 +102,27 @@ function usableRows(models: ModelDetails[] | undefined): Record<string, OpenCode
 }
 
 function replaceModels(cfg: OpenCodeConfig, rows: Record<string, OpenCodeModelRow>): void {
-  cfg.provider ??= {};
-  cfg.provider.cursor ??= {};
-  cfg.provider.cursor.models = rows;
-  if (cfg.providers?.cursor !== undefined) {
-    cfg.providers.cursor.models = rows;
+  for (const block of cursorBlocks(cfg)) {
+    block.models = rows;
   }
+}
+
+function isOurProviderBlock(block: OpenCodeProviderBlock): boolean {
+  const spec = `${block.npm ?? ""} ${block.package ?? ""}`;
+  return spec.includes("cursor-rpc-opencode");
 }
 
 function cursorBlocks(cfg: OpenCodeConfig): OpenCodeProviderBlock[] {
   const blocks: OpenCodeProviderBlock[] = [];
-  if (cfg.provider?.cursor !== undefined) {
-    blocks.push(cfg.provider.cursor);
-  }
-  if (cfg.providers?.cursor !== undefined) {
-    blocks.push(cfg.providers.cursor);
+  for (const group of [cfg.provider, cfg.providers]) {
+    if (group === undefined) {
+      continue;
+    }
+    for (const block of Object.values(group)) {
+      if (block !== undefined && isOurProviderBlock(block)) {
+        blocks.push(block);
+      }
+    }
   }
   return blocks;
 }

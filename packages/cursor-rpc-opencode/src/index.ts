@@ -3,9 +3,6 @@ import type { LanguageModelV3 } from "@ai-sdk/provider";
 import { resolvedClientOptions, sameSettingsInputs } from "./client-options.js";
 import { CursorLanguageModel } from "./language-model.js";
 
-export { TOOLS_SUPPORTED } from "./language-model.js";
-export { cursorPlugin, plugin } from "./catalogue.js";
-
 export type CursorProviderSettings = {
   name?: string;
   apiKey?: string;
@@ -13,6 +10,8 @@ export type CursorProviderSettings = {
   headers?: Headers | Record<string, string>;
   abortSignal?: AbortSignal;
   env?: Record<string, string | undefined>;
+  clientType?: string;
+  clientVersion?: string;
 };
 
 export type CursorProvider = {
@@ -36,6 +35,8 @@ export function createCursor(settings: CursorProviderSettings = {}): CursorProvi
       fetch: settings.fetch,
       env: settings.env,
       headers: settings.headers,
+      clientType: settings.clientType,
+      clientVersion: settings.clientVersion,
     };
     return created;
   }

@@ -10,9 +10,11 @@ Build the package before a local `file://` install:
 npm run build -w cursor-rpc-opencode
 ```
 
-Point `plugin` / `provider.cursor.npm` (v1) or `plugins` / `providers.cursor.package` (v2) at an absolute `file://` URL to the built package root (`packages/cursor-rpc-opencode`) or its ESM entry (`dist/index.js`).
+Point `provider.cursor.npm` (v1) or `providers.cursor.package` (v2) at an absolute `file://` URL to the built package root (`packages/cursor-rpc-opencode`). Bun cannot import a directory without a root `index.js`, so use that package root (or `dist/index.js`) for the factory.
 
-Provider id is **`cursor`**. The package exports `createCursor` (the factory OpenCode loads from the first `create*` export) and `cursorPlugin` (also exported as `plugin`) — a v1 `config` hook that overlays the signed-in usable catalogue. The hook never calls `login()` and never opens a browser.
+Point `plugin` / `plugins` at the **plugin entry** (`plugin.js` or `dist/plugin.js`), not the factory. OpenCode treats every export on the plugin module as a plugin function.
+
+Provider id can be **`cursor`** or another key such as **`cursor-rpc`**. The package exports `createCursor` (the factory OpenCode loads from the first `create*` export) and a function `plugin` that returns a v1 `config` hook. The hook overlays the signed-in usable catalogue on any provider block whose `npm` / `package` points at this package. It never calls `login()` and never opens a browser.
 
 Credentials come from provider `options.apiKey` / `settings.apiKey`, or from `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN`. Missing credentials fail closed.
 
@@ -23,7 +25,7 @@ Credentials come from provider `options.apiKey` / `settings.apiKey`, or from `CU
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:///absolute/path/to/packages/cursor-rpc-opencode"],
+  "plugin": ["file:///absolute/path/to/packages/cursor-rpc-opencode/plugin.js"],
   "provider": {
     "cursor": {
       "npm": "file:///absolute/path/to/packages/cursor-rpc-opencode",
@@ -49,7 +51,7 @@ You can set `options.apiKey` or export `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN` in
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugins": ["file:///absolute/path/to/packages/cursor-rpc-opencode"],
+  "plugins": ["file:///absolute/path/to/packages/cursor-rpc-opencode/plugin.js"],
   "providers": {
     "cursor": {
       "package": "file:///absolute/path/to/packages/cursor-rpc-opencode",

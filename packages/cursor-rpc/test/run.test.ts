@@ -343,6 +343,15 @@ describe("run turn", () => {
     expect(opening.message.value.excludeWorkspaceContext).toBe(true);
   });
 
+  it("opening run_request omits excludeWorkspaceContext when explicitly disabled", () => {
+    const opening = openingRunRequest("hello", undefined, { excludeWorkspaceContext: false });
+    expect(opening.message.case).toBe("runRequest");
+    if (opening.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(opening.message.value.excludeWorkspaceContext).toBeUndefined();
+  });
+
   it("opening run_request sets model_details.model_id when modelDetails is provided", () => {
     const opening = openingRunRequest("hello", undefined, {
       modelDetails: create(ModelDetailsSchema, { modelId: "composer-2.5", displayName: "Composer" }),

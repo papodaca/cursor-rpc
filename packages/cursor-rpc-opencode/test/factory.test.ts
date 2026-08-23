@@ -54,6 +54,7 @@ describe("createCursor factory", () => {
     const createKeys = Object.keys(mod).filter((key) => key.startsWith("create"));
     expect(createKeys[0]).toBe("createCursor");
     expect(createKeys).toEqual(["createCursor"]);
+    expect(Object.keys(mod)).toEqual(["createCursor"]);
   });
 
   it("returns a v3 language model from createCursor({}).languageModel", () => {
@@ -137,6 +138,8 @@ describe("createCursor factory", () => {
     expect(options).toBeDefined();
     expect(options?.apiKey).toBe("key_ok");
     expect(options?.fetch).toBe(fetch);
+    expect(options?.clientType).toBe("cli");
+    expect(options?.clientVersion).toBe("cli-1.0.0");
     expect(options?.signal).toBeUndefined();
     expect(options).not.toHaveProperty("abortSignal");
 

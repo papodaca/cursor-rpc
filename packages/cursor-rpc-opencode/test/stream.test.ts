@@ -588,6 +588,23 @@ describe("stream mapping", () => {
     const collected = await collectParts(stream);
     expect(finishes(collected.parts).some((part) => part.finishReason.unified === "stop")).toBe(false);
     expect(collected.error !== undefined || collected.parts.some((part) => part.type === "error")).toBe(true);
+    const stallError = collected.error ?? collected.parts.find((part) => part.type === "error")?.error;
+    expect(stallError).toBeInstanceOf(APICallError);
+    expect((stallError as APICallError).isRetryable).toBe(false);
+  });
+
+  it("uses a 3-minute stall so first-token thinking does not abort the Run", async () => {
+    let seen: ClientRunOptions | undefined;
+    const model = modelWithRun(async (options) => {
+      seen = options;
+      return completedHandle([
+        { type: "text_delta", text: "ok" },
+        { type: "turn_ended", usage: { inputTokens: 1, outputTokens: 1 } },
+      ]);
+    });
+    await model.doStream({ prompt: [user("hi")] });
+    expect(seen?.stallMs).toBe(180_000);
+    expect(seen?.excludeWorkspaceContext).toBe(false);
   });
 
   it("doGenerate consumes doStream and returns content, finishReason, and usage", async () => {

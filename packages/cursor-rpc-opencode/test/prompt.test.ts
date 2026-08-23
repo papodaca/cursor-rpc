@@ -70,12 +70,11 @@ async function captureRun(prompt: LanguageModelV3CallOptions["prompt"], extra: P
 }
 
 describe("prompt mapping", () => {
-  it("sends last user text as prompt and system via customSystemPrompt with empty history", async () => {
+  it("folds system text into the last user prompt and omits customSystemPrompt", async () => {
     const captured = await captureRun([system("Be terse."), user("Hello")]);
 
-    expect(captured.prompt).toBe("Hello");
-    expect(captured.customSystemPrompt).toBe("Be terse.");
-    expect(captured.prompt).not.toContain("Be terse.");
+    expect(captured.prompt).toBe("Be terse.\n\nHello");
+    expect(captured.customSystemPrompt).toBeUndefined();
     expect(captured.modelId).toBe("composer");
     expect(captured.mode === "ask" || captured.mode === undefined).toBe(true);
     expect(captured.mcpTools).toBeUndefined();

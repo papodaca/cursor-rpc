@@ -8,7 +8,6 @@ import type { ConversationHistory } from "cursor-rpc";
 
 export type MappedPrompt = {
   prompt: string;
-  customSystemPrompt?: string;
   conversationHistory?: ConversationHistory;
   warnings: SharedV3Warning[];
 };
@@ -50,14 +49,14 @@ export function mapPrompt(messages: LanguageModelV3Prompt): MappedPrompt {
 
   const lastUserIndex = items.findLastIndex((item) => item.kind === "user");
   const last = lastUserIndex >= 0 ? items[lastUserIndex] : undefined;
-  const prompt = last?.kind === "user" ? last.text : "";
+  const userPrompt = last?.kind === "user" ? last.text : "";
+  const systemBlock = systems.join("\n\n");
+  const prompt = systemBlock.length === 0 ? userPrompt : userPrompt.length === 0 ? systemBlock : `${systemBlock}\n\n${userPrompt}`;
   const historyItems = items.filter((item, index) => index !== lastUserIndex && !isEmptyHistoryItem(item));
-  const customSystemPrompt = systems.length > 0 ? systems.join("\n\n") : undefined;
 
   return {
     prompt,
     warnings,
-    ...(customSystemPrompt === undefined ? {} : { customSystemPrompt }),
     ...(historyItems.length === 0 ? {} : { conversationHistory: buildHistory(historyItems) }),
   };
 }

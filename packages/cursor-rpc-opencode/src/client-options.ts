@@ -3,15 +3,24 @@ import { sanitizeProviderHeaders } from "./headers.js";
 
 const FORWARDED_ENV_KEYS = ["CURSOR_API_KEY", "CURSOR_AUTH_TOKEN"] as const;
 
+/** Agent Run uses the CLI identity. Library default `private_worker` is a different product pool. */
+const OPENCODE_CLIENT_TYPE = "cli";
+const OPENCODE_CLIENT_VERSION = "cli-1.0.0";
+
 export type ProviderClientSettings = {
   apiKey?: string;
   fetch?: NonNullable<CreateClientOptions["fetch"]>;
   env?: Record<string, string | undefined>;
   headers?: Headers | Record<string, string>;
+  clientType?: string;
+  clientVersion?: string;
 };
 
 export function resolvedClientOptions(settings: ProviderClientSettings): CreateClientOptions {
-  const options: CreateClientOptions = {};
+  const options: CreateClientOptions = {
+    clientType: settings.clientType ?? OPENCODE_CLIENT_TYPE,
+    clientVersion: settings.clientVersion ?? OPENCODE_CLIENT_VERSION,
+  };
   if (settings.apiKey !== undefined) {
     options.apiKey = settings.apiKey;
   }
@@ -33,7 +42,9 @@ export function sameSettingsInputs(left: ProviderClientSettings, right: Provider
     left.apiKey === right.apiKey &&
     left.fetch === right.fetch &&
     left.env === right.env &&
-    left.headers === right.headers
+    left.headers === right.headers &&
+    left.clientType === right.clientType &&
+    left.clientVersion === right.clientVersion
   );
 }
 

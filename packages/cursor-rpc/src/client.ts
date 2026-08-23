@@ -72,6 +72,8 @@ export type ClientRunOptions = {
   allowWebFetch?: boolean;
   allowedTools?: string[];
   excludeTools?: string[];
+  stallMs?: number;
+  excludeWorkspaceContext?: boolean;
 };
 
 export type CursorRpcClient = {
@@ -182,6 +184,8 @@ class CursorRpcClientImpl implements CursorRpcClient {
         maxTokens: options.maxTokens,
         modelId: resolveRequestedModelId(options.modelId, session.models.aliasMap),
         modelDetails: options.modelDetails,
+        stallMs: options.stallMs,
+        excludeWorkspaceContext: options.excludeWorkspaceContext,
         inbound,
         send: (message) => {
           outbound.push(message);
