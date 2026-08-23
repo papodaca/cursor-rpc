@@ -275,6 +275,144 @@ describe("official OpenAI SDK Responses contract", () => {
   });
 });
 
+describe("official OpenAI SDK stored Chat and Responses lifecycle", () => {
+  it("creates, lists, retrieves, updates, and deletes a stored chat completion", async () => {
+    const { url } = await start();
+    const client = sdk(url);
+
+    const unstored = await client.chat.completions.create({
+      model: "composer-2",
+      messages: [{ role: "user", content: "hello" }],
+    });
+    await expect(client.chat.completions.retrieve(unstored.id)).rejects.toBeInstanceOf(NotFoundError);
+
+    const created = await client.chat.completions.create({
+      model: "composer-2",
+      messages: [{ role: "user", content: "hello" }],
+      store: true,
+      metadata: { team: "sdk" },
+    });
+    expect(created.id).toMatch(/^chatcmpl-/);
+    expect(created.object).toBe("chat.completion");
+    expect(created.choices[0]?.message.content).toBe("hi");
+
+    const listed = await client.chat.completions.list();
+    expect(listed.data.map((row) => row.id)).toContain(created.id);
+    expect(listed.data.map((row) => row.id)).not.toContain(unstored.id);
+    const listedRow = listed.data.find((row) => row.id === created.id);
+    expect(listedRow?.choices[0]?.message.content).toBe("hi");
+    expect(listedRow?.choices[0]?.message).toMatchObject({ role: "assistant", content: "hi" });
+
+    const retrieved = await client.chat.completions.retrieve(created.id);
+    expect(retrieved.id).toBe(created.id);
+    expect(retrieved.choices[0]?.message.content).toBe("hi");
+    expect(metadataOf(retrieved)).toEqual({ team: "sdk" });
+
+    const updated = await client.chat.completions.update(created.id, {
+      metadata: { team: "updated" },
+    });
+    expect(updated.id).toBe(created.id);
+    expect(metadataOf(updated)).toEqual({ team: "updated" });
+    expect(updated.choices[0]?.message.content).toBe("hi");
+
+    const deleted = await client.chat.completions.delete(created.id);
+    expect(deleted).toEqual({
+      id: created.id,
+      deleted: true,
+      object: "chat.completion.deleted",
+    });
+    await expect(client.chat.completions.retrieve(created.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("deletes a stored response then retrieve is NotFoundError", async () => {
+    const { url } = await start();
+    const client = sdk(url);
+    const created = await client.responses.create({
+      model: "composer-2",
+      input: "hello",
+    });
+    expect(created.id).toMatch(/^resp_/);
+    await client.responses.delete(created.id);
+    await expect(client.responses.retrieve(created.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("maps cancel of a completed id and compact to BadRequestError", async () => {
+    const { url } = await start();
+    const client = sdk(url);
+    const created = await client.responses.create({
+      model: "composer-2",
+      input: "hello",
+    });
+    await expect(client.responses.cancel(created.id)).rejects.toMatchObject({
+      constructor: BadRequestError,
+      status: 400,
+    });
+    await expect(client.responses.compact({ model: "gpt-4o" })).rejects.toMatchObject({
+      constructor: BadRequestError,
+      status: 400,
+    });
+  });
+
+  it("lists stored chat and retrieves remaining responses after listener restart", async () => {
+    const dbPath = tempResponsesDbPath();
+    const first = await start(fakeProvider({ events: thinkingThenHi() }), {
+      CURSOR_RPC_OPENAI_RESPONSES_DB: dbPath,
+    });
+    const firstClient = sdk(first.url);
+    const chat = await firstClient.chat.completions.create({
+      model: "composer-2",
+      messages: [{ role: "user", content: "hello" }],
+      store: true,
+    });
+    const kept = await firstClient.responses.create({
+      model: "composer-2",
+      input: "hello",
+    });
+    const removed = await firstClient.responses.create({
+      model: "composer-2",
+      input: "bye",
+    });
+    await firstClient.responses.delete(removed.id);
+    await first.close();
+
+    const second = await start(fakeProvider({ events: thinkingThenHi() }), {
+      CURSOR_RPC_OPENAI_RESPONSES_DB: dbPath,
+    });
+    const secondClient = sdk(second.url);
+    const listed = await secondClient.chat.completions.list();
+    expect(listed.data.map((row) => row.id)).toContain(chat.id);
+    expect(listed.data.find((row) => row.id === chat.id)?.choices[0]?.message.content).toBe("hi");
+
+    const retrieved = await secondClient.responses.retrieve(kept.id);
+    expect(retrieved.id).toBe(kept.id);
+    expect(retrieved.status).toBe("completed");
+    expect(assistantText(retrieved)).toBe("hi");
+    await expect(secondClient.responses.retrieve(removed.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("retrieves a stored completed id with stream: true and replays stored text", async () => {
+    const { url } = await start();
+    const client = sdk(url);
+    const created = await client.responses.create({
+      model: "composer-2",
+      input: "hello",
+    });
+    const stream = await client.responses.retrieve(created.id, { stream: true });
+    const types: string[] = [];
+    let streamed = "";
+    for await (const event of stream) {
+      types.push(event.type);
+      if (event.type === "response.output_text.delta") {
+        streamed += event.delta;
+      }
+    }
+    expect(types).toContain("response.created");
+    expect(types).toContain("response.completed");
+    expect(types).not.toContain("chat.completion.chunk");
+    expect(streamed).toBe("hi");
+  });
+});
+
 describe("bin and README", () => {
   it("documents the default loopback baseURL and that this is not @cursor/sdk", () => {
     const readme = readFileSync(fileURLToPath(new URL("../README.md", import.meta.url)), "utf8");
@@ -292,7 +430,17 @@ describe("bin and README", () => {
     expect(readme).toContain("plaintext prompt log for this process's Cursor account");
     expect(readme).toContain("store: false");
     expect(readme).toContain("inspect-by-known-id");
-    expect(readme).toContain("no delete in this work");
+    expect(readme).toMatch(/store:\s*true is required|opt-in.*store:\s*true|store:\s*true.*opt-in/i);
+    expect(readme).toMatch(/list enumerates|enumerates every stored completion body/i);
+    expect(readme).toMatch(/authenticated|auth gate/i);
+    expect(readme).toMatch(/auth-off loopback|loopback client when auth is off/i);
+    expect(readme).toMatch(/cancel.*unsupported|unsupported.*cancel|cancel needs background/i);
+    expect(readme).toMatch(/compact.*unsupported|unsupported.*compact/i);
+    expect(readme).toMatch(/shared SQLite|share one SQLite|same SQLite/i);
+    expect(readme).toMatch(/delete is the retention control/i);
+    expect(readme).toMatch(/stream=true.*replay|replays stored/i);
+    expect(readme).toMatch(/not a new ASK turn/i);
+    expect(readme).toContain("`include` is ignored");
     expect(readme).toContain("Responses SSE is not Chat Completions chunks");
     expect(readme).toContain("auth-off means any loopback client can retrieve by id");
   });
@@ -309,6 +457,10 @@ describe("bin and README", () => {
     expect(listen).not.toHaveBeenCalled();
   });
 });
+
+function metadataOf(completion: { metadata?: Record<string, string> | null }): Record<string, string> | null | undefined {
+  return completion.metadata;
+}
 
 function assistantText(response: { output: Array<{ type: string; content?: Array<{ type: string; text?: string }> }> }): string {
   const texts: string[] = [];
