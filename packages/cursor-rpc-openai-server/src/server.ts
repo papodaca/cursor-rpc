@@ -24,6 +24,13 @@ import { handleChatCompletion, runPinned, type UpstreamPin } from "./openai/comp
 import { listModelsResponse, modelNotFoundError, toOpenAIModel } from "./openai/models.js";
 import { openResponseStore, type ResponseStore } from "./openai/response-store.js";
 import { handleCreateResponse } from "./openai/responses.js";
+import {
+  chatCompletionIdFromPath,
+  handleDeleteStoredCompletion,
+  handleGetStoredCompletion,
+  handleListStoredCompletions,
+  handleUpdateStoredCompletion,
+} from "./openai/stored-completions.js";
 import { emptyProvider, type ServerProvider } from "./provider.js";
 
 export type StartedServer = {
@@ -137,6 +144,26 @@ async function route(
     writeJson(res, 200, stored, requestId);
     return;
   }
+  if (req.method === "GET" && path === "/v1/chat/completions") {
+    handleListStoredCompletions({ res, requestId, url: req.url ?? "/", store });
+    return;
+  }
+  const chatCompletionId = chatCompletionIdFromPath(path);
+  if (chatCompletionId !== undefined) {
+    if (req.method === "GET") {
+      handleGetStoredCompletion({ res, requestId, id: chatCompletionId, store });
+      return;
+    }
+    if (req.method === "POST") {
+      const body = await readJson(req);
+      handleUpdateStoredCompletion({ res, requestId, id: chatCompletionId, body, store });
+      return;
+    }
+    if (req.method === "DELETE") {
+      handleDeleteStoredCompletion({ res, requestId, id: chatCompletionId, store });
+      return;
+    }
+  }
   if (pin.error !== undefined) {
     writeJson(res, pin.error.status, pin.error.body, requestId);
     return;
@@ -166,6 +193,7 @@ async function route(
         body,
         provider,
         pin,
+        store,
       }),
     );
     return;

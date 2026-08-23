@@ -5,7 +5,9 @@ import { HttpError, mapCursorError, openaiError, writeJson, type MappedCursorErr
 import type { ServerProvider } from "../provider.js";
 import { mapMessages } from "./messages.js";
 import { modelNotFoundError, resolveCreateModel } from "./models.js";
+import type { ResponseStore } from "./response-store.js";
 import { completionChunk, writeSseData, writeSseDone, writeSseHeaders, type Usage } from "./sse.js";
+import { parseCreateStore } from "./stored-completions.js";
 
 export type UpstreamPin = {
   error?: HttpError;
@@ -17,6 +19,7 @@ export async function handleChatCompletion(options: {
   body: unknown;
   provider: ServerProvider;
   pin: UpstreamPin;
+  store: ResponseStore;
 }): Promise<void> {
   const request = parseCreateRequest(options.body);
   const mapped = mapMessages(request.messages);
@@ -36,25 +39,15 @@ export async function handleChatCompletion(options: {
     const id = `chatcmpl-${randomUUID()}`;
     const created = Math.floor(Date.now() / 1000);
     const result = await handle.wait();
-    writeJson(
-      options.res,
-      200,
-      {
-        id,
-        object: "chat.completion",
-        created,
-        model,
-        choices: [
-          {
-            index: 0,
-            message: { role: "assistant", content: result.text },
-            finish_reason: "stop",
-          },
-        ],
-        usage: toUsage(result.usage),
-      },
-      options.requestId,
-    );
+    const completion = chatCompletionObject({
+      id,
+      created,
+      model,
+      text: result.text,
+      usage: result.usage,
+    });
+    persistStoredCompletion(options.store, request, completion);
+    writeJson(options.res, 200, completion, options.requestId);
     return;
   }
 
@@ -76,6 +69,7 @@ export async function handleChatCompletion(options: {
     const created = Math.floor(Date.now() / 1000);
     writeSseHeaders(options.res, options.requestId);
     let roleSent = false;
+    let text = "";
     let usage: UsageCounts = {};
     for await (const event of handle) {
       if (event.type === "turn_ended") {
@@ -85,6 +79,7 @@ export async function handleChatCompletion(options: {
       if (event.type !== "text_delta") {
         continue;
       }
+      text += event.text;
       const delta: { role?: "assistant"; content: string } = { content: event.text };
       if (!roleSent) {
         delta.role = "assistant";
@@ -111,6 +106,11 @@ export async function handleChatCompletion(options: {
       writeSseData(options.res, completionChunk(id, created, model, [], toUsage(usage)));
     }
     writeSseDone(options.res);
+    persistStoredCompletion(
+      options.store,
+      request,
+      chatCompletionObject({ id, created, model, text, usage }),
+    );
     options.res.end();
   } catch (error) {
     await settleStreamError(error, options.res, options.requestId, options.pin);
@@ -169,6 +169,21 @@ type CreateRequest = {
   model: string | undefined;
   stream: boolean;
   includeUsage: boolean;
+  store: boolean;
+  metadata: Record<string, string> | null;
+};
+
+type ChatCompletionObject = {
+  id: string;
+  object: "chat.completion";
+  created: number;
+  model: string;
+  choices: Array<{
+    index: number;
+    message: { role: "assistant"; content: string };
+    finish_reason: "stop";
+  }>;
+  usage: Usage;
 };
 
 function parseCreateRequest(body: unknown): CreateRequest {
@@ -185,6 +200,7 @@ function parseCreateRequest(body: unknown): CreateRequest {
   }
   const record = body;
   rejectUnsupported(record);
+  const stored = parseCreateStore(record);
   return {
     messages: record.messages,
     model: typeof record.model === "string" ? record.model : undefined,
@@ -193,7 +209,49 @@ function parseCreateRequest(body: unknown): CreateRequest {
       record.stream === true &&
       isRecord(record.stream_options) &&
       record.stream_options.include_usage === true,
+    store: stored.store,
+    metadata: stored.metadata,
   };
+}
+
+function chatCompletionObject(options: {
+  id: string;
+  created: number;
+  model: string;
+  text: string;
+  usage: UsageCounts | undefined;
+}): ChatCompletionObject {
+  return {
+    id: options.id,
+    object: "chat.completion",
+    created: options.created,
+    model: options.model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: options.text },
+        finish_reason: "stop",
+      },
+    ],
+    usage: toUsage(options.usage),
+  };
+}
+
+function persistStoredCompletion(
+  store: ResponseStore,
+  request: CreateRequest,
+  completion: ChatCompletionObject,
+): void {
+  if (!request.store) {
+    return;
+  }
+  store.insertChat({
+    id: completion.id,
+    created: completion.created,
+    model: completion.model,
+    metadata: request.metadata,
+    body: completion,
+  });
 }
 
 function rejectUnsupported(body: Record<string, unknown>): void {
