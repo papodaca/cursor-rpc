@@ -16,7 +16,7 @@ import {
   StreamError,
   type ClientRunOptions,
   type CursorRpcClient,
-  type McpToolDefinition,
+  type McpToolDto,
   type RunEvent,
   type RunHandle,
   type UsageCounts,
@@ -77,7 +77,7 @@ export async function streamCursorRun(options: {
       handle,
       options.call.abortSignal,
       warnings,
-      new Set((mcpTools ?? []).map((tool) => tool.toolName)),
+      new Set((mcpTools ?? []).map((tool) => tool.toolName ?? tool.name)),
     ),
   };
 }
@@ -151,7 +151,7 @@ function clientRunOptions(
   modelId: string,
   call: LanguageModelV3CallOptions,
   mapped: ReturnType<typeof mapPrompt>,
-  mcpTools: McpToolDefinition[] | undefined,
+  mcpTools: McpToolDto[] | undefined,
   mode?: ProbeRunMode,
 ): ClientRunOptions {
   const options: ClientRunOptions = {
@@ -175,11 +175,11 @@ function clientRunOptions(
   return options;
 }
 
-function mapMcpTools(tools: LanguageModelV3CallOptions["tools"]): McpToolDefinition[] | undefined {
+function mapMcpTools(tools: LanguageModelV3CallOptions["tools"]): McpToolDto[] | undefined {
   if (tools === undefined || tools.length === 0) {
     return undefined;
   }
-  const mapped: McpToolDefinition[] = [];
+  const mapped: McpToolDto[] = [];
   for (const tool of tools) {
     if (tool.type !== "function") {
       continue;
@@ -190,7 +190,7 @@ function mapMcpTools(tools: LanguageModelV3CallOptions["tools"]): McpToolDefinit
       providerIdentifier: "opencode",
       description: tool.description ?? "",
       inputSchemaJson: JSON.stringify(tool.inputSchema),
-    } as McpToolDefinition);
+    });
   }
   return mapped.length === 0 ? undefined : mapped;
 }
@@ -375,8 +375,8 @@ function applyEvent(
       ctx.onFinish();
       enqueueFinish(ctx.controller, mapUsage(event.usage), { unified: "stop", raw: "turn_ended" }, ctx.warnings, ctx.startWarningCount);
       break;
-    case "mcp_args":
-      finishMcpArgs(event, ctx);
+    case "mcp_exec":
+      finishMcpExec(event, ctx);
       break;
     default:
       break;
@@ -384,18 +384,18 @@ function applyEvent(
 }
 
 function isAdvertisedMcp(
-  event: Extract<RunEvent, { type: "mcp_args" }>,
+  event: Extract<RunEvent, { type: "mcp_exec" }>,
   advertisedTools: ReadonlySet<string>,
 ): boolean {
-  if (!advertisedTools.has(event.toolName)) {
+  if (!advertisedTools.has(event.name)) {
     return false;
   }
   const provider = event.providerIdentifier?.trim();
   return provider === undefined || provider === "" || provider === "opencode";
 }
 
-function finishMcpArgs(
-  event: Extract<RunEvent, { type: "mcp_args" }>,
+function finishMcpExec(
+  event: Extract<RunEvent, { type: "mcp_exec" }>,
   ctx: {
     abortHandle: () => void;
     advertisedTools: ReadonlySet<string>;
@@ -411,20 +411,20 @@ function finishMcpArgs(
   ctx.closeText();
   if (!isAdvertisedMcp(event, ctx.advertisedTools)) {
     ctx.abortHandle();
-    throw new StreamError(`unadvertised mcp_args for ${event.toolName}`);
+    throw new StreamError(`unadvertised mcp_exec for ${event.name}`);
   }
   const id = randomUUID();
-  ctx.controller.enqueue({ type: "tool-input-start", id, toolName: event.toolName });
-  ctx.controller.enqueue({ type: "tool-input-delta", id, delta: event.argsJson });
+  ctx.controller.enqueue({ type: "tool-input-start", id, toolName: event.name });
+  ctx.controller.enqueue({ type: "tool-input-delta", id, delta: event.argumentsJson });
   ctx.controller.enqueue({ type: "tool-input-end", id });
   ctx.controller.enqueue({
     type: "tool-call",
     toolCallId: id,
-    toolName: event.toolName,
-    input: event.argsJson,
+    toolName: event.name,
+    input: event.argumentsJson,
   });
   ctx.onFinish();
-  enqueueFinish(ctx.controller, mapUsage(), { unified: "tool-calls", raw: "mcp_args" }, ctx.warnings, ctx.startWarningCount);
+  enqueueFinish(ctx.controller, mapUsage(), { unified: "tool-calls", raw: "mcp_exec" }, ctx.warnings, ctx.startWarningCount);
   ctx.abortHandle();
 }
 

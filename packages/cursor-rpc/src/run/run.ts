@@ -38,6 +38,8 @@ export type McpToolDto = {
   name: string;
   description?: string;
   inputSchemaJson?: string;
+  toolName?: string;
+  providerIdentifier?: string;
 };
 
 export type RunMode = "ask" | "agent";
@@ -136,8 +138,8 @@ export function openingRunRequest(
                   create(McpToolDefinitionSchema, {
                     name: tool.name,
                     description: tool.description ?? "",
-                    toolName: tool.name,
-                    providerIdentifier: "cursor-rpc",
+                    toolName: tool.toolName ?? tool.name,
+                    providerIdentifier: tool.providerIdentifier ?? "cursor-rpc",
                     inputSchemaJson: tool.inputSchemaJson,
                   }),
                 ),

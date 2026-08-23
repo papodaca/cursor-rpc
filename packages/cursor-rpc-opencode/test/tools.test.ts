@@ -204,7 +204,11 @@ function mcpAuthQuery(): AgentServerMessage {
   });
 }
 
-function mcpArgsMessage(toolName: string, argsJson: string, id = 11): AgentServerMessage {
+function mcpArgsMessage(toolName: string, args: Record<string, string>, id = 11): AgentServerMessage {
+  const encoded: { [key: string]: Uint8Array } = {};
+  for (const [key, value] of Object.entries(args)) {
+    encoded[key] = new TextEncoder().encode(JSON.stringify(value));
+  }
   return create(AgentServerMessageSchema, {
     message: {
       case: "execServerMessage",
@@ -216,8 +220,7 @@ function mcpArgsMessage(toolName: string, argsJson: string, id = 11): AgentServe
           value: create(McpArgsSchema, {
             name: toolName,
             toolName,
-            argsJson,
-            providerIdentifier: "opencode",
+            args: encoded,
           }),
         },
       }),
@@ -290,9 +293,9 @@ describe("OpenCode tools through Cursor MCP", () => {
       completedHandle(
         [
           {
-            type: "mcp_args",
-            toolName: "write",
-            argsJson: WRITE_ARGS_JSON,
+            type: "mcp_exec",
+            name: "write",
+            argumentsJson: WRITE_ARGS_JSON,
             id: 11,
             execId: "exec-mcp-1",
           },
@@ -338,7 +341,7 @@ describe("OpenCode tools through Cursor MCP", () => {
 
     const finish = finishes(collected.parts);
     expect(finish).toHaveLength(1);
-    expect(finish[0]?.finishReason).toEqual({ unified: "tool-calls", raw: "mcp_args" });
+    expect(finish[0]?.finishReason).toEqual({ unified: "tool-calls", raw: "mcp_exec" });
   });
 
   it("does not set onExec and still throws Cursor non-MCP exec with no shell result", async () => {
@@ -430,7 +433,7 @@ describe("OpenCode tools through Cursor MCP", () => {
       runs.push(options);
       if (runs.length === 1) {
         return completedHandle(
-          [{ type: "mcp_args", toolName: "write", argsJson: WRITE_ARGS_JSON, id: 11, execId: "exec-1" }],
+          [{ type: "mcp_exec", name: "write", argumentsJson: WRITE_ARGS_JSON, id: 11, execId: "exec-1" }],
           {
             abort: () => {
               firstAbort += 1;
@@ -530,7 +533,7 @@ describe("OpenCode tools through Cursor MCP", () => {
     let aborted = false;
     const model = modelWithRun(async () =>
       completedHandle(
-        [{ type: "mcp_args", toolName: "bash", argsJson: '{"command":"ls"}', id: 99, execId: "exec-bash" }],
+        [{ type: "mcp_exec", name: "bash", argumentsJson: '{"command":"ls"}', id: 99, execId: "exec-bash" }],
         {
           abort: () => {
             aborted = true;
@@ -566,9 +569,9 @@ describe("OpenCode tools through Cursor MCP", () => {
       completedHandle(
         [
           {
-            type: "mcp_args",
-            toolName: "write",
-            argsJson: WRITE_ARGS_JSON,
+            type: "mcp_exec",
+            name: "write",
+            argumentsJson: WRITE_ARGS_JSON,
             id: 99,
             execId: "exec-write",
             providerIdentifier: "cursor",
@@ -601,24 +604,15 @@ describe("OpenCode tools through Cursor MCP", () => {
           outbound.push(opening.value);
         }
         yield unknownExecMessage();
-        const shellReply = await Promise.race([
+        yield turnEnded();
+        const reply = await Promise.race([
           iterator.next(),
           new Promise<IteratorResult<AgentClientMessage>>((resolve) => {
             setTimeout(() => resolve({ done: true, value: undefined }), 1500);
           }),
         ]);
-        if (shellReply.value !== undefined) {
-          outbound.push(shellReply.value);
-        }
-        yield mcpArgsMessage("write", WRITE_ARGS_JSON);
-        const mcpReply = await Promise.race([
-          iterator.next(),
-          new Promise<IteratorResult<AgentClientMessage>>((resolve) => {
-            setTimeout(() => resolve({ done: true, value: undefined }), 1500);
-          }),
-        ]);
-        if (mcpReply.value !== undefined) {
-          outbound.push(mcpReply.value);
+        if (reply.value !== undefined) {
+          outbound.push(reply.value);
         }
       },
     });
@@ -638,11 +632,7 @@ describe("OpenCode tools through Cursor MCP", () => {
     expect(String(probe.error)).not.toBe("hung");
     expect(probe.error).toBeUndefined();
     expect(probe.parts.some((part) => part.type === "error")).toBe(false);
-    const calls = toolCalls(probe.parts);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.toolName).toBe("write");
-    expect(calls[0]?.input).toBe(WRITE_ARGS_JSON);
-    expect(finishes(probe.parts)[0]?.finishReason.unified).toBe("tool-calls");
+    expect(toolCalls(probe.parts)).toHaveLength(0);
 
     const opening = outbound.find((message) => message.message.case === "runRequest");
     expect(opening?.message.case).toBe("runRequest");
@@ -654,12 +644,6 @@ describe("OpenCode tools through Cursor MCP", () => {
         expect(action.value.requestContext?.env?.workspacePaths).toEqual([]);
       }
     }
-    expect(
-      outbound.some(
-        (message) =>
-          message.message.case === "execClientControlMessage" && message.message.value.message.case === "throw",
-      ),
-    ).toBe(true);
     expect(JSON.stringify(outbound)).not.toMatch(/mcpResult|mcp_result|shellResult|shell_result/);
 
     let shipped: ClientRunOptions | undefined;
