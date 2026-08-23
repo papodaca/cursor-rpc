@@ -1,6 +1,6 @@
 import type { ServerResponse } from "node:http";
 
-export type ResponsesSseEvent = {
+type ResponsesSseEvent = {
   type: string;
   sequence_number: number;
 } & Record<string, unknown>;
@@ -20,7 +20,7 @@ export function writeResponsesSseHeaders(res: ServerResponse, requestId: string)
   res.socket?.setNoDelay(true);
 }
 
-export function writeResponsesSseEvent(res: ServerResponse, event: ResponsesSseEvent): void {
+function writeResponsesSseEvent(res: ServerResponse, event: ResponsesSseEvent): void {
   if (res.writableEnded) {
     return;
   }

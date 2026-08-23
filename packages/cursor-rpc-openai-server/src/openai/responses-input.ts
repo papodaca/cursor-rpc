@@ -1,5 +1,5 @@
 import { conversationHistoryFromTurns, type HistoryTurn } from "cursor-rpc";
-import { HttpError, openaiError } from "../errors.js";
+import { HttpError, invalidRequestError, isRecord } from "../errors.js";
 import type { ResponseTranscript } from "./response-store.js";
 
 export type MappedResponsesInput = {
@@ -137,29 +137,7 @@ function ancestorTurns(transcripts: readonly ResponseTranscript[]): HistoryTurn[
 }
 
 function invalidInput(message: string): HttpError {
-  return new HttpError(
-    400,
-    openaiError({
-      message,
-      type: "invalid_request_error",
-      param: "input",
-      code: "invalid_request_error",
-    }),
-  );
+  return invalidRequestError("input", message);
 }
 
-function unsupportedInput(message: string): HttpError {
-  return new HttpError(
-    400,
-    openaiError({
-      message,
-      type: "invalid_request_error",
-      param: "input",
-      code: "invalid_request_error",
-    }),
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
+const unsupportedInput = invalidInput;

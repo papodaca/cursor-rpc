@@ -1,7 +1,19 @@
 import { randomBytes } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import type { ClientRunOptions, RunHandle, UsageCounts } from "cursor-rpc";
-import { HttpError, internalError, mapCursorError, openaiError, writeJson, type MappedCursorError } from "../errors.js";
+import {
+  applyMappedError,
+  HttpError,
+  internalError,
+  invalidRequestBodyError,
+  invalidRequestError,
+  isRecord,
+  mapCursorError,
+  openaiError,
+  writeJson,
+  type MappedCursorError,
+  type UpstreamPin,
+} from "../errors.js";
 import type { ServerProvider } from "../provider.js";
 import { modelNotFoundError, resolveCreateModel } from "./models.js";
 import type { InsertResponseRow, ResponseStore } from "./response-store.js";
@@ -40,11 +52,7 @@ export const cancelNotBackgroundError = openaiError({
 const ASK_MODE = "ask" as const;
 const ENTROPY_BYTES = 16;
 
-export type ResponsesPin = {
-  error?: HttpError;
-};
-
-export type PreparedResponseCreate = {
+type PreparedResponseCreate = {
   model: string;
   store: boolean;
   stream: boolean;
@@ -63,7 +71,7 @@ type ParsedCreateRequest = {
   previousResponseId: string | undefined;
 };
 
-export async function prepareResponseCreate(options: {
+async function prepareResponseCreate(options: {
   body: unknown;
   provider: ServerProvider;
   store: ResponseStore;
@@ -156,8 +164,7 @@ export function handleCancelResponse(options: {
   id: string;
   store: ResponseStore;
 }): void {
-  const stored = options.store.get(options.id);
-  if (stored === undefined) {
+  if (!options.store.has(options.id)) {
     writeJson(options.res, 404, responseNotFoundError, options.requestId);
     return;
   }
@@ -173,7 +180,7 @@ export async function handleCreateResponse(options: {
   requestId: string;
   body: unknown;
   provider: ServerProvider;
-  pin: ResponsesPin;
+  pin: UpstreamPin;
   store: ResponseStore;
 }): Promise<void> {
   const prepared = await prepareResponseCreate({
@@ -238,7 +245,7 @@ async function handleCreateResponseStream(options: {
   res: ServerResponse;
   requestId: string;
   provider: ServerProvider;
-  pin: ResponsesPin;
+  pin: UpstreamPin;
   store: ResponseStore;
   prepared: PreparedResponseCreate;
   ids: { responseId: string; messageId: string };
@@ -368,7 +375,7 @@ async function handleCreateResponseStream(options: {
 function settleCreateStreamError(options: {
   error: unknown;
   res: ServerResponse;
-  pin: ResponsesPin;
+  pin: UpstreamPin;
   store: ResponseStore;
   prepared: PreparedResponseCreate;
   ids: { responseId: string; messageId: string };
@@ -536,15 +543,7 @@ function inProgressFromStored(stored: Record<string, unknown>): Record<string, u
 
 function parseCreateRequest(body: unknown): ParsedCreateRequest {
   if (!isRecord(body)) {
-    throw new HttpError(
-      400,
-      openaiError({
-        message: "Invalid request body",
-        type: "invalid_request_error",
-        param: null,
-        code: "invalid_request_error",
-      }),
-    );
+    throw invalidRequestBodyError;
   }
   rejectUnsupported(body);
   rejectUnsupportedInputItems(body.input);
@@ -572,10 +571,9 @@ function rejectUnsupported(body: Record<string, unknown>): void {
     throw unsupported("tools", "Tool calling is not supported");
   }
   if (body.text !== undefined && body.text !== null) {
-    if (isRecord(body.text) && body.text.format !== undefined && body.text.format !== null) {
-      if (!isRecord(body.text.format) || body.text.format.type !== "text") {
-        throw unsupported("text", "Only text.format type text is supported");
-      }
+    const format = isRecord(body.text) ? body.text.format : undefined;
+    if (format !== undefined && format !== null && (!isRecord(format) || format.type !== "text")) {
+      throw unsupported("text", "Only text.format type text is supported");
     }
   }
 }
@@ -735,34 +733,8 @@ function persistFailed(
   }
 }
 
-function applyMappedError(mapped: MappedCursorError, pin: ResponsesPin): HttpError {
-  if (mapped.kind === "cancelled") {
-    return new HttpError(
-      499,
-      openaiError({
-        message: "cancelled",
-        type: "api_error",
-        param: null,
-        code: "cancelled",
-      }),
-    );
-  }
-  if (mapped.pin) {
-    pin.error = mapped.error;
-  }
-  return mapped.error;
-}
-
 function unsupported(param: string, message: string): HttpError {
-  return new HttpError(
-    400,
-    openaiError({
-      message,
-      type: "invalid_request_error",
-      param,
-      code: "invalid_request_error",
-    }),
-  );
+  return invalidRequestError(param, message);
 }
 
 function toUsage(usage: UsageCounts | undefined): {
@@ -781,8 +753,4 @@ function toUsage(usage: UsageCounts | undefined): {
 
 function isUniqueConstraint(error: unknown): boolean {
   return error instanceof Error && /UNIQUE constraint failed/i.test(error.message);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

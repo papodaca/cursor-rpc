@@ -2,16 +2,13 @@ import { chmodSync, closeSync, constants, existsSync, mkdirSync, openSync, statS
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { normalizeResponsesDbPath } from "../config.js";
-import { HttpError, openaiError } from "../errors.js";
+import { HttpError, invalidRequestError, openaiError } from "../errors.js";
 
-export const SQLITE_BUSY_TIMEOUT_MS = 5000;
+const SQLITE_BUSY_TIMEOUT_MS = 5000;
 const SCHEMA_USER_VERSION = 2;
 const MAX_CHAIN_HOPS = 100;
 const LIST_DEFAULT_LIMIT = 20;
 const LIST_MAX_LIMIT = 100;
-const MAX_METADATA_KEYS = 16;
-const MAX_METADATA_KEY_CHARS = 64;
-const MAX_METADATA_VALUE_CHARS = 512;
 
 const RESPONSES_DDL = `CREATE TABLE responses (
     id TEXT PRIMARY KEY,
@@ -80,6 +77,7 @@ export type ResponseStore = {
   readonly path: string;
   insert(row: InsertResponseRow): void;
   get(id: string): Record<string, unknown> | undefined;
+  has(id: string): boolean;
   delete(id: string): boolean;
   loadAncestorChain(previousResponseId: string): ResponseTranscript[];
   insertChat(row: InsertChatCompletionRow): void;
@@ -98,7 +96,7 @@ export function buildListChatCompletionsSql(options: {
 }): string {
   const direction = options.order === "desc" ? "DESC" : "ASC";
   const cmp = options.order === "desc" ? "<" : ">";
-  const clauses = ["SELECT id, metadata, body FROM chat_completions WHERE 1 = 1"];
+  const clauses = ["SELECT metadata, body FROM chat_completions WHERE 1 = 1"];
   if (options.hasModel) {
     clauses.push("AND model = ?");
   }
@@ -143,6 +141,7 @@ export function openResponseStore(dbPath: string): ResponseStore {
     id, status, previous_response_id, model, instructions, store, created_at, response_json, transcript_json
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const getProjectionStmt = db.prepare("SELECT response_json FROM responses WHERE id = ?");
+  const hasStmt = db.prepare("SELECT 1 FROM responses WHERE id = ?");
   const deleteStmt = db.prepare("DELETE FROM responses WHERE id = ?");
   const getChainStmt = db.prepare(
     "SELECT status, previous_response_id, transcript_json FROM responses WHERE id = ?",
@@ -180,6 +179,9 @@ export function openResponseStore(dbPath: string): ResponseStore {
         return undefined;
       }
       return JSON.parse(row.response_json) as Record<string, unknown>;
+    },
+    has(id: string): boolean {
+      return hasStmt.get(id) !== undefined;
     },
     delete(id: string): boolean {
       return deleteStmt.run(id).changes > 0;
@@ -314,7 +316,6 @@ function runInTransaction(db: DatabaseSync, work: () => void): void {
 }
 
 type ChatStoredRow = {
-  id?: string;
   metadata: string;
   body: string;
 };
@@ -328,21 +329,7 @@ function overlayChatRow(row: ChatStoredRow): Record<string, unknown> {
 }
 
 function serializeMetadata(metadata: Record<string, string> | null): string {
-  const value = metadata === null ? {} : metadata;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw paramError("metadata", "Invalid metadata");
-  }
-  const keys = Object.keys(value);
-  if (keys.length > MAX_METADATA_KEYS) {
-    throw paramError("metadata", "Invalid metadata");
-  }
-  for (const key of keys) {
-    const item = value[key];
-    if (key.length > MAX_METADATA_KEY_CHARS || typeof item !== "string" || item.length > MAX_METADATA_VALUE_CHARS) {
-      throw paramError("metadata", "Invalid metadata");
-    }
-  }
-  return JSON.stringify(value);
+  return JSON.stringify(metadata ?? {});
 }
 
 function resolveListLimit(limit: number | undefined): number {
@@ -366,15 +353,7 @@ function resolveListOrder(order: string | undefined): "asc" | "desc" {
 }
 
 function paramError(param: string, message: string): HttpError {
-  return new HttpError(
-    400,
-    openaiError({
-      message,
-      type: "invalid_request_error",
-      param,
-      code: "invalid_request_error",
-    }),
-  );
+  return invalidRequestError(param, message);
 }
 
 function prepareSecretFile(filePath: string): void {

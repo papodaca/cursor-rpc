@@ -1,5 +1,12 @@
 import type { ServerResponse } from "node:http";
-import { HttpError, openaiError, writeJson } from "../errors.js";
+import {
+  invalidRequestBodyError,
+  invalidRequestError,
+  isRecord,
+  openaiError,
+  writeJson,
+  type HttpError,
+} from "../errors.js";
 import type { ListChatCompletionsQuery, ResponseStore } from "./response-store.js";
 
 const MAX_METADATA_KEYS = 16;
@@ -27,7 +34,7 @@ export function parseCreateStore(body: Record<string, unknown>): {
   return { store: true, metadata: parseStoredMetadata(body.metadata) };
 }
 
-export function parseStoredMetadata(value: unknown): Record<string, string> {
+function parseStoredMetadata(value: unknown): Record<string, string> {
   if (!isRecord(value)) {
     throw paramError("metadata", "Invalid metadata");
   }
@@ -53,7 +60,7 @@ export function chatCompletionIdFromPath(path: string): string | undefined {
   return decodeURIComponent(path.slice(CHAT_COMPLETIONS_PREFIX.length));
 }
 
-export function parseListQuery(url: string): ListChatCompletionsQuery {
+function parseListQuery(url: string): ListChatCompletionsQuery {
   const parsed = new URL(url, "http://localhost");
   const query: ListChatCompletionsQuery = {};
   const after = parsed.searchParams.get("after");
@@ -119,15 +126,7 @@ export function handleUpdateStoredCompletion(options: {
   store: ResponseStore;
 }): void {
   if (!isRecord(options.body)) {
-    throw new HttpError(
-      400,
-      openaiError({
-        message: "Invalid request body",
-        type: "invalid_request_error",
-        param: null,
-        code: "invalid_request_error",
-      }),
-    );
+    throw invalidRequestBodyError;
   }
   if (!Object.hasOwn(options.body, "metadata")) {
     handleGetStoredCompletion(options);
@@ -160,18 +159,6 @@ export function handleDeleteStoredCompletion(options: {
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
 function paramError(param: string, message: string): HttpError {
-  return new HttpError(
-    400,
-    openaiError({
-      message,
-      type: "invalid_request_error",
-      param,
-      code: "invalid_request_error",
-    }),
-  );
+  return invalidRequestError(param, message);
 }

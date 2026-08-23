@@ -133,6 +133,52 @@ export function mapCursorError(error: unknown): MappedCursorError {
   };
 }
 
+export type UpstreamPin = {
+  error?: HttpError;
+};
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+export function invalidRequestError(param: string | null, message: string): HttpError {
+  return new HttpError(
+    400,
+    openaiError({
+      message,
+      type: "invalid_request_error",
+      param,
+      code: "invalid_request_error",
+    }),
+  );
+}
+
+export const invalidRequestBodyError = invalidRequestError(null, "Invalid request body");
+
+export function applyMappedError(mapped: MappedCursorError, pin: UpstreamPin): HttpError {
+  if (mapped.kind === "cancelled") {
+    return new HttpError(
+      499,
+      openaiError({ message: "cancelled", type: "api_error", param: null, code: "cancelled" }),
+    );
+  }
+  if (mapped.pin) {
+    pin.error = mapped.error;
+  }
+  return mapped.error;
+}
+
+export async function runPinned<T>(pin: UpstreamPin, operation: () => Promise<T>): Promise<T> {
+  if (pin.error !== undefined) {
+    throw pin.error;
+  }
+  try {
+    return await operation();
+  } catch (error) {
+    throw applyMappedError(mapCursorError(error), pin);
+  }
+}
+
 export function writeJson(res: ServerResponse, status: number, body: unknown, requestId: string): void {
   if (res.writableEnded) {
     return;

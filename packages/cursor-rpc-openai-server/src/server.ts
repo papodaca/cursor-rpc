@@ -17,9 +17,11 @@ import {
   invalidJsonError,
   notFoundError,
   payloadTooLargeError,
+  runPinned,
   writeJson,
+  type UpstreamPin,
 } from "./errors.js";
-import { handleChatCompletion, runPinned, type UpstreamPin } from "./openai/completions.js";
+import { handleChatCompletion } from "./openai/completions.js";
 import { listModelsResponse, modelNotFoundError, toOpenAIModel } from "./openai/models.js";
 import { openResponseStore, type ResponseStore } from "./openai/response-store.js";
 import {

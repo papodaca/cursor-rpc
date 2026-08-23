@@ -1,17 +1,23 @@
 import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
 import type { ClientRunOptions, RunHandle, UsageCounts } from "cursor-rpc";
-import { HttpError, mapCursorError, openaiError, writeJson, type MappedCursorError } from "../errors.js";
+import {
+  applyMappedError,
+  HttpError,
+  invalidRequestBodyError,
+  invalidRequestError,
+  isRecord,
+  mapCursorError,
+  runPinned,
+  writeJson,
+  type UpstreamPin,
+} from "../errors.js";
 import type { ServerProvider } from "../provider.js";
 import { mapMessages } from "./messages.js";
 import { modelNotFoundError, resolveCreateModel } from "./models.js";
 import type { ResponseStore } from "./response-store.js";
 import { completionChunk, writeSseData, writeSseDone, writeSseHeaders, type Usage } from "./sse.js";
 import { parseCreateStore } from "./stored-completions.js";
-
-export type UpstreamPin = {
-  error?: HttpError;
-};
 
 export async function handleChatCompletion(options: {
   res: ServerResponse;
@@ -119,27 +125,6 @@ export async function handleChatCompletion(options: {
   }
 }
 
-function applyMappedError(mapped: MappedCursorError, pin: UpstreamPin): HttpError {
-  if (mapped.kind === "cancelled") {
-    return new HttpError(499, openaiError({ message: "cancelled", type: "api_error", param: null, code: "cancelled" }));
-  }
-  if (mapped.pin) {
-    pin.error = mapped.error;
-  }
-  return mapped.error;
-}
-
-export async function runPinned<T>(pin: UpstreamPin, operation: () => Promise<T>): Promise<T> {
-  if (pin.error !== undefined) {
-    throw pin.error;
-  }
-  try {
-    return await operation();
-  } catch (error) {
-    throw applyMappedError(mapCursorError(error), pin);
-  }
-}
-
 async function settleStreamError(
   error: unknown,
   res: ServerResponse,
@@ -188,15 +173,7 @@ type ChatCompletionObject = {
 
 function parseCreateRequest(body: unknown): CreateRequest {
   if (!isRecord(body)) {
-    throw new HttpError(
-      400,
-      openaiError({
-        message: "Invalid request body",
-        type: "invalid_request_error",
-        param: null,
-        code: "invalid_request_error",
-      }),
-    );
+    throw invalidRequestBodyError;
   }
   const record = body;
   rejectUnsupported(record);
@@ -272,19 +249,7 @@ function rejectUnsupported(body: Record<string, unknown>): void {
 }
 
 function unsupported(param: string, message: string): HttpError {
-  return new HttpError(
-    400,
-    openaiError({
-      message,
-      type: "invalid_request_error",
-      param,
-      code: "invalid_request_error",
-    }),
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return invalidRequestError(param, message);
 }
 
 function toUsage(usage: UsageCounts | undefined): Usage {
