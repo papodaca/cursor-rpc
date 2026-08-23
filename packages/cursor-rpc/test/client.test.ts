@@ -160,6 +160,142 @@ describe("createClient", () => {
     expect(first.toLowerCase()).toContain("not a local agent runtime");
   });
 
+  it("run sends selected modelId on the opening run_request", async () => {
+    let opening: AgentClientMessage | undefined;
+    const client = createClient({
+      apiKey: "key_live_test",
+      env: {},
+      fetch: async () => jsonResponse(200, { accessToken: "tok", refreshToken: "ref" }),
+      bootstrapClients: bootstrapClients(),
+      openRun: async function* (outbound) {
+        const first = await outbound[Symbol.asyncIterator]().next();
+        opening = first.value;
+        yield textDelta("hello");
+        yield turnEnded();
+      },
+    });
+    await (await client.run({ prompt: "Say hello", modelId: "composer-2.5" })).wait();
+    expect(opening?.message.case).toBe("runRequest");
+    if (opening?.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(opening.message.value.requestedModel?.modelId).toBe("composer-2.5");
+    const action = opening.message.value.action?.action;
+    if (action?.case !== "userMessageAction") {
+      throw new Error("expected userMessageAction");
+    }
+    expect(action.value.userMessage?.mode).toBe(2);
+    expect(action.value.requestContext?.env?.workspacePaths).toEqual([]);
+    expect(opening.message.value.excludeWorkspaceContext).toBe(true);
+    client.close();
+  });
+
+  it("run sends model_details when a catalogue row is provided", async () => {
+    let opening: AgentClientMessage | undefined;
+    const client = createClient({
+      apiKey: "key_live_test",
+      env: {},
+      fetch: async () => jsonResponse(200, { accessToken: "tok", refreshToken: "ref" }),
+      bootstrapClients: bootstrapClients(),
+      openRun: async function* (outbound) {
+        const first = await outbound[Symbol.asyncIterator]().next();
+        opening = first.value;
+        yield textDelta("hello");
+        yield turnEnded();
+      },
+    });
+    await (await client.run({ prompt: "Say hello", modelDetails: MODEL })).wait();
+    expect(opening?.message.case).toBe("runRequest");
+    if (opening?.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(opening.message.value.modelDetails?.modelId).toBe("composer-2.5");
+    client.close();
+  });
+
+  it("run omits model fields when modelId is omitted", async () => {
+    let opening: AgentClientMessage | undefined;
+    const client = createClient({
+      apiKey: "key_live_test",
+      env: {},
+      fetch: async () => jsonResponse(200, { accessToken: "tok", refreshToken: "ref" }),
+      bootstrapClients: bootstrapClients(),
+      openRun: async function* (outbound) {
+        const first = await outbound[Symbol.asyncIterator]().next();
+        opening = first.value;
+        yield textDelta("hello");
+        yield turnEnded();
+      },
+    });
+    await (await client.run({ prompt: "Say hello" })).wait();
+    expect(opening?.message.case).toBe("runRequest");
+    if (opening?.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(opening.message.value.requestedModel).toBeUndefined();
+    expect(opening.message.value.modelDetails).toBeUndefined();
+    expect(opening.message.value.customSystemPrompt).toBeUndefined();
+    const action = opening.message.value.action?.action;
+    if (action?.case !== "userMessageAction") {
+      throw new Error("expected userMessageAction");
+    }
+    expect(action.value.userMessage?.mode).toBe(2);
+    client.close();
+  });
+
+  it("run resolves a catalogue alias onto requested_model.model_id", async () => {
+    let opening: AgentClientMessage | undefined;
+    const client = createClient({
+      apiKey: "key_live_test",
+      env: {},
+      fetch: async () => jsonResponse(200, { accessToken: "tok", refreshToken: "ref" }),
+      bootstrapClients: bootstrapClients(),
+      openRun: async function* (outbound) {
+        const first = await outbound[Symbol.asyncIterator]().next();
+        opening = first.value;
+        yield textDelta("hello");
+        yield turnEnded();
+      },
+    });
+    await (await client.run({ prompt: "Say hello", modelId: "Composer" })).wait();
+    expect(opening?.message.case).toBe("runRequest");
+    if (opening?.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(opening.message.value.requestedModel?.modelId).toBe("composer-2.5");
+    client.close();
+  });
+
+  it("run forwards optional mode and customSystemPrompt on the opening request", async () => {
+    let opening: AgentClientMessage | undefined;
+    const client = createClient({
+      apiKey: "key_live_test",
+      env: {},
+      fetch: async () => jsonResponse(200, { accessToken: "tok", refreshToken: "ref" }),
+      bootstrapClients: bootstrapClients(),
+      openRun: async function* (outbound) {
+        const first = await outbound[Symbol.asyncIterator]().next();
+        opening = first.value;
+        yield textDelta("hello");
+        yield turnEnded();
+      },
+    });
+    await (
+      await client.run({ prompt: "Say hello", mode: "agent", customSystemPrompt: "You are terse." })
+    ).wait();
+    expect(opening?.message.case).toBe("runRequest");
+    if (opening?.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(opening.message.value.customSystemPrompt).toBe("You are terse.");
+    const action = opening.message.value.action?.action;
+    if (action?.case !== "userMessageAction") {
+      throw new Error("expected userMessageAction");
+    }
+    expect(action.value.userMessage?.mode).toBe(1);
+    client.close();
+  });
+
   it("run via openRun yields text_delta and completes wait", async () => {
     const client = createClient({
       apiKey: "key_live_test",

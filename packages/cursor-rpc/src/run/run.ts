@@ -24,6 +24,7 @@ import {
   type AgentServerMessage,
   type ConversationHistory,
 } from "../generated/agent/v1/agent_pb.js";
+import type { ModelDetails } from "../generated/aiserver/v1/models_pb.js";
 import { dispatchServerMessage, type DispatchHandlers, type InFlightExec } from "./dispatch.js";
 import { startHeartbeat, startStallTimer } from "./heartbeat.js";
 import { AsyncQueue } from "./queue.js";
@@ -49,6 +50,7 @@ export type RunRequestOptions = {
   customSystemPrompt?: string;
   maxTokens?: number;
   modelId?: string;
+  modelDetails?: ModelDetails;
 };
 
 export type RunOptions = {
@@ -124,6 +126,7 @@ export function openingRunRequest(
           extras.modelId !== undefined && extras.modelId.length > 0
             ? create(RequestedModelSchema, { modelId: extras.modelId })
             : undefined,
+        modelDetails: extras.modelDetails,
         excludeWorkspaceContext: true,
         mcpTools:
           mcpTools.length > 0
@@ -236,6 +239,7 @@ export function runTurn(options: RunOptions): RunHandle {
           customSystemPrompt: options.customSystemPrompt,
           maxTokens: options.maxTokens,
           modelId: options.modelId,
+          modelDetails: options.modelDetails,
         }),
       );
       events.push({ type: "connection", state: "connected" });

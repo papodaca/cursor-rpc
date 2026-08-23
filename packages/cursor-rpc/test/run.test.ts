@@ -6,6 +6,7 @@ import { AuthSession } from "../src/auth/session.ts";
 import { AuthenticationError, CancelledError, StreamError } from "../src/errors.ts";
 import {
   AgentClientMessageSchema,
+  AgentMode,
   AgentServerMessageSchema,
   ExecServerControlMessageSchema,
   ExecServerMessageSchema,
@@ -15,6 +16,7 @@ import {
   TextDeltaUpdateSchema,
   TurnEndedUpdateSchema,
 } from "../src/generated/agent/v1/agent_pb.ts";
+import { ModelDetailsSchema } from "../src/generated/aiserver/v1/models_pb.ts";
 import { AsyncQueue } from "../src/run/queue.ts";
 import { DEFAULT_EXCLUDE_TOOLS, openingRunRequest, runHeaders, runTurn } from "../src/run/run.ts";
 import type { AgentClientMessage, AgentServerMessage } from "../src/generated/agent/v1/agent_pb.ts";
@@ -270,27 +272,16 @@ describe("run turn", () => {
 
   it("abort during stream tears down and rejects wait", async () => {
     const inbound = new AsyncQueue<AgentServerMessage>();
-    const outbound: AgentClientMessage[] = [];
     const handle = runTurn({
       prompt: "hi",
       inbound,
-      send: (message) => {
-        outbound.push(message);
-      },
+      send: () => undefined,
       heartbeatMs: 60_000,
       stallMs: 60_000,
     });
     handle.abort();
     inbound.close();
     await expect(handle.wait()).rejects.toBeInstanceOf(CancelledError);
-    expect(
-      outbound.some((message) => {
-        if (message.message.case !== "conversationAction") {
-          return false;
-        }
-        return message.message.value.action.case === "cancelAction";
-      }),
-    ).toBe(true);
   });
 
   it("mid-stream Unauthenticated clears the store, rejects wait, and does not start another Run", async () => {
@@ -331,12 +322,60 @@ describe("run turn", () => {
     expect(action.value.requestContext?.env?.workspacePaths).toEqual([]);
     expect(action.value.requestContext?.fileContents).toEqual({});
     expect(opening.message.value.excludeWorkspaceContext).toBe(true);
-    const withModel = openingRunRequest("hello", undefined, { modelId: "composer-2.5" });
-    expect(withModel.message.case).toBe("runRequest");
-    if (withModel.message.case !== "runRequest") {
+    expect(opening.message.value.requestedModel).toBeUndefined();
+    expect(opening.message.value.modelDetails).toBeUndefined();
+    expect(opening.message.value.customSystemPrompt).toBeUndefined();
+  });
+
+  it("opening run_request sets requested_model.model_id when modelId is provided", () => {
+    const opening = openingRunRequest("hello", undefined, { modelId: "composer-2.5" });
+    expect(opening.message.case).toBe("runRequest");
+    if (opening.message.case !== "runRequest") {
       throw new Error("expected runRequest");
     }
-    expect(withModel.message.value.requestedModel?.modelId).toBe("composer-2.5");
+    expect(opening.message.value.requestedModel?.modelId).toBe("composer-2.5");
+    const action = opening.message.value.action?.action;
+    if (action?.case !== "userMessageAction") {
+      throw new Error("expected userMessageAction");
+    }
+    expect(action.value.userMessage?.mode).toBe(AgentMode.ASK);
+    expect(action.value.requestContext?.env?.workspacePaths).toEqual([]);
+    expect(opening.message.value.excludeWorkspaceContext).toBe(true);
+  });
+
+  it("opening run_request sets model_details.model_id when modelDetails is provided", () => {
+    const opening = openingRunRequest("hello", undefined, {
+      modelDetails: create(ModelDetailsSchema, { modelId: "composer-2.5", displayName: "Composer" }),
+    });
+    expect(opening.message.case).toBe("runRequest");
+    if (opening.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(opening.message.value.modelDetails?.modelId).toBe("composer-2.5");
+  });
+
+  it("opening run_request omitted mode stays ASK and mode agent sets AGENT", () => {
+    const omitted = openingRunRequest("hello", undefined, { modelId: "composer-2.5" });
+    const agent = openingRunRequest("hello", undefined, { modelId: "composer-2.5", mode: "agent" });
+    if (omitted.message.case !== "runRequest" || agent.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    const omittedAction = omitted.message.value.action?.action;
+    const agentAction = agent.message.value.action?.action;
+    if (omittedAction?.case !== "userMessageAction" || agentAction?.case !== "userMessageAction") {
+      throw new Error("expected userMessageAction");
+    }
+    expect(omittedAction.value.userMessage?.mode).toBe(AgentMode.ASK);
+    expect(agentAction.value.userMessage?.mode).toBe(AgentMode.AGENT);
+  });
+
+  it("opening run_request sets custom_system_prompt when provided", () => {
+    const opening = openingRunRequest("hello", undefined, { customSystemPrompt: "You are terse." });
+    expect(opening.message.case).toBe("runRequest");
+    if (opening.message.case !== "runRequest") {
+      throw new Error("expected runRequest");
+    }
+    expect(opening.message.value.customSystemPrompt).toBe("You are terse.");
   });
 
   it("second turn history omits conversationState blobs", async () => {

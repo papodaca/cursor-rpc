@@ -18,6 +18,7 @@ import {
 } from "./transport/connect.js";
 import { bootstrap, type BootstrapClients, type BootstrapSession } from "./session/bootstrap.js";
 import { assertRunTransport } from "./session/host.js";
+import type { ModelDetails } from "./generated/aiserver/v1/models_pb.js";
 import type { ModelCatalogue } from "./session/models.js";
 import type { DispatchHandlers } from "./run/dispatch.js";
 import type { RunHandle } from "./run/run.js";
@@ -64,6 +65,7 @@ export type ClientRunOptions = {
   customSystemPrompt?: string;
   maxTokens?: number;
   modelId?: string;
+  modelDetails?: ModelDetails;
   signal?: AbortSignal;
   handlers?: DispatchHandlers;
   allowWebSearch?: boolean;
@@ -178,7 +180,8 @@ class CursorRpcClientImpl implements CursorRpcClient {
         mcpTools: options.mcpTools,
         customSystemPrompt: options.customSystemPrompt,
         maxTokens: options.maxTokens,
-        modelId: options.modelId,
+        modelId: resolveRequestedModelId(options.modelId, session.models.aliasMap),
+        modelDetails: options.modelDetails,
         inbound,
         send: (message) => {
           outbound.push(message);
@@ -308,6 +311,16 @@ function hasCredentials(
 
 function nonEmpty(value: string | undefined): boolean {
   return value !== undefined && value.trim() !== "";
+}
+
+function resolveRequestedModelId(
+  modelId: string | undefined,
+  aliasMap: Map<string, string>,
+): string | undefined {
+  if (modelId === undefined || modelId.trim() === "") {
+    return undefined;
+  }
+  return aliasMap.get(modelId.toLowerCase()) ?? modelId;
 }
 
 function agentToolHeaders(tools: ClientTools | undefined, run: ClientRunOptions): Headers {
