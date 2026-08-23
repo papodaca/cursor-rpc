@@ -140,14 +140,22 @@ function stringifyArgs(input: unknown): string {
   return typeof input === "string" ? input : JSON.stringify(input ?? {});
 }
 
+function asText(value: unknown): string {
+  return typeof value === "string" ? value : String(value ?? "");
+}
+
+function textContent(text: string) {
+  return { content: { case: "text" as const, value: { text } } };
+}
+
 function toolOutputText(output: LanguageModelV3ToolResultOutput): { text: string; isError?: boolean } {
   switch (output.type) {
     case "text":
-      return { text: typeof output.value === "string" ? output.value : String(output.value ?? "") };
+      return { text: asText(output.value) };
     case "json":
       return { text: JSON.stringify(output.value) };
     case "error-text":
-      return { text: typeof output.value === "string" ? output.value : String(output.value ?? ""), isError: true };
+      return { text: asText(output.value), isError: true };
     case "error-json":
       return { text: JSON.stringify(output.value), isError: true };
     case "execution-denied":
@@ -181,14 +189,7 @@ function buildHistory(items: HistoryItem[]): ConversationHistory {
           message: {
             case: "user" as const,
             value: {
-              content: [
-                {
-                  content: {
-                    case: "text" as const,
-                    value: { text: item.text },
-                  },
-                },
-              ],
+              content: [textContent(item.text)],
             },
           },
         };
@@ -200,14 +201,7 @@ function buildHistory(items: HistoryItem[]): ConversationHistory {
             value: {
               toolCallId: item.toolCallId,
               toolName: item.toolName,
-              content: [
-                {
-                  content: {
-                    case: "text" as const,
-                    value: { text: item.text },
-                  },
-                },
-              ],
+              content: [textContent(item.text)],
               ...(item.isError === true ? { isError: true } : {}),
             },
           },
@@ -219,12 +213,7 @@ function buildHistory(items: HistoryItem[]): ConversationHistory {
           value: {
             content: item.parts.map((part) =>
               part.type === "text"
-                ? {
-                    content: {
-                      case: "text" as const,
-                      value: { text: part.text },
-                    },
-                  }
+                ? textContent(part.text)
                 : {
                     content: {
                       case: "toolCall" as const,

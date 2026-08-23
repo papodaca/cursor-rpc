@@ -85,8 +85,8 @@ export async function consumeCursorStream(
   const reader = stream.getReader();
   const content: LanguageModelV3Content[] = [];
   const warnings: SharedV3Warning[] = [];
-  const texts = new Map<string, string>();
-  const reasonings = new Map<string, string>();
+  const texts = new Map<string, string[]>();
+  const reasonings = new Map<string, string[]>();
   let finishReason: LanguageModelV3FinishReason | undefined;
   let usage: LanguageModelV3Usage | undefined;
 
@@ -101,17 +101,23 @@ export async function consumeCursorStream(
         case "stream-start":
           warnings.push(...part.warnings);
           break;
-        case "text-delta":
-          texts.set(part.id, (texts.get(part.id) ?? "") + part.delta);
+        case "text-delta": {
+          const chunks = texts.get(part.id) ?? [];
+          chunks.push(part.delta);
+          texts.set(part.id, chunks);
           break;
+        }
         case "text-end":
-          content.push({ type: "text", text: texts.get(part.id) ?? "" });
+          content.push({ type: "text", text: (texts.get(part.id) ?? []).join("") });
           break;
-        case "reasoning-delta":
-          reasonings.set(part.id, (reasonings.get(part.id) ?? "") + part.delta);
+        case "reasoning-delta": {
+          const chunks = reasonings.get(part.id) ?? [];
+          chunks.push(part.delta);
+          reasonings.set(part.id, chunks);
           break;
+        }
         case "reasoning-end":
-          content.push({ type: "reasoning", text: reasonings.get(part.id) ?? "" });
+          content.push({ type: "reasoning", text: (reasonings.get(part.id) ?? []).join("") });
           break;
         case "tool-call":
           content.push(part);
@@ -214,8 +220,11 @@ function pumpHandle(
       const onAbort = (): void => {
         handle.abort();
       };
-      abortSignal?.addEventListener("abort", onAbort, { once: true });
-      controller.enqueue({ type: "stream-start", warnings });
+      if (isAborted(abortSignal)) {
+        handle.abort();
+        controller.error(toProviderError(new CancelledError()));
+        return;
+      }
 
       let textId: string | undefined;
       let reasoningId: string | undefined;
@@ -270,12 +279,11 @@ function pumpHandle(
       };
 
       try {
+        abortSignal?.addEventListener("abort", onAbort, { once: true });
+        controller.enqueue({ type: "stream-start", warnings });
         for await (const event of handle) {
-          if (abortSignal?.aborted === true) {
+          if (isAborted(abortSignal)) {
             throw new CancelledError();
-          }
-          if (finished) {
-            break;
           }
           applyEvent(event, ctx);
           if (finished) {
@@ -283,18 +291,18 @@ function pumpHandle(
           }
         }
         if (!finished) {
-          if (abortSignal?.aborted === true) {
+          if (isAborted(abortSignal)) {
             throw new CancelledError();
           }
           emitMissingTurnEnded(controller, closeReasoning, closeText, warnings);
         }
         closeStream();
       } catch (error) {
-        if (finished && abortSignal?.aborted !== true) {
+        if (finished && !isAborted(abortSignal)) {
           closeStream();
           return;
         }
-        if (isMissingTurnEnded(error) && !finished && abortSignal?.aborted !== true) {
+        if (isMissingTurnEnded(error) && !finished && !isAborted(abortSignal)) {
           emitMissingTurnEnded(controller, closeReasoning, closeText, warnings);
           closeStream();
           return;
@@ -452,6 +460,10 @@ function mapUsage(usage: UsageCounts = {}): LanguageModelV3Usage {
       reasoning: usage.reasoningTokens,
     },
   };
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 function isMissingTurnEnded(error: unknown): boolean {

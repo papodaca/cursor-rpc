@@ -31,7 +31,12 @@ export function createCursor(settings: CursorProviderSettings = {}): CursorProvi
     client?.close();
     const created = createClient(resolvedClientOptions(settings));
     client = created;
-    lastInputs = settings;
+    lastInputs = {
+      apiKey: settings.apiKey,
+      fetch: settings.fetch,
+      env: settings.env,
+      headers: settings.headers,
+    };
     return created;
   }
 
@@ -46,51 +51,7 @@ export function createCursor(settings: CursorProviderSettings = {}): CursorProvi
     close(): void {
       client?.close();
       client = undefined;
-      lastOptions = undefined;
+      lastInputs = undefined;
     },
   };
-}
-
-function resolvedClientOptions(settings: CursorProviderSettings): CreateClientOptions {
-  const options: CreateClientOptions = {};
-  if (settings.apiKey !== undefined) {
-    options.apiKey = settings.apiKey;
-  }
-  if (settings.fetch !== undefined) {
-    options.fetch = settings.fetch;
-  }
-  if (settings.env !== undefined) {
-    options.env = settings.env;
-  }
-  const headers = sanitizeProviderHeaders(settings.headers);
-  if (headers !== undefined) {
-    options.headers = headers;
-  }
-  return options;
-}
-
-function sameClientOptions(left: CreateClientOptions, right: CreateClientOptions): boolean {
-  return (
-    left.apiKey === right.apiKey &&
-    left.fetch === right.fetch &&
-    left.env === right.env &&
-    sameHeaders(left.headers, right.headers)
-  );
-}
-
-function sameHeaders(left: Headers | undefined, right: Headers | undefined): boolean {
-  if (left === right) {
-    return true;
-  }
-  if (left === undefined || right === undefined) {
-    return false;
-  }
-  const leftEntries = [...left.entries()].sort(([a], [b]) => a.localeCompare(b));
-  const rightEntries = [...right.entries()].sort(([a], [b]) => a.localeCompare(b));
-  if (leftEntries.length !== rightEntries.length) {
-    return false;
-  }
-  return leftEntries.every(
-    ([name, value], index) => rightEntries[index]?.[0] === name && rightEntries[index]?.[1] === value,
-  );
 }

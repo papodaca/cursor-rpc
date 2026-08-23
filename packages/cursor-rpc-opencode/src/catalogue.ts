@@ -4,7 +4,7 @@ import {
   type CursorRpcClient,
   type ModelDetails,
 } from "cursor-rpc";
-import { sanitizeProviderHeaders } from "./headers.js";
+import { resolvedClientOptions, type ProviderClientSettings } from "./client-options.js";
 import { TOOLS_SUPPORTED } from "./language-model.js";
 
 export type OpenCodeModelRow = {
@@ -16,19 +16,12 @@ export type OpenCodeModelRow = {
   capabilities: { tools: boolean };
 };
 
-type OpenCodeClientSettings = {
-  apiKey?: string;
-  env?: Record<string, string | undefined>;
-  fetch?: CreateClientOptions["fetch"];
-  headers?: Headers | Record<string, string>;
-};
-
 export type OpenCodeProviderBlock = {
   npm?: string;
   package?: string;
   name?: string;
-  options?: OpenCodeClientSettings;
-  settings?: OpenCodeClientSettings;
+  options?: ProviderClientSettings;
+  settings?: ProviderClientSettings;
   models?: Record<string, Partial<OpenCodeModelRow>>;
 };
 
@@ -37,11 +30,7 @@ export type OpenCodeConfig = {
   providers?: { cursor?: OpenCodeProviderBlock };
 };
 
-export type CatalogueOverlayOptions = {
-  apiKey?: string;
-  env?: Record<string, string | undefined>;
-  fetch?: CreateClientOptions["fetch"];
-  headers?: Headers | Record<string, string>;
+export type CatalogueOverlayOptions = ProviderClientSettings & {
   createClient?: typeof defaultCreateClient;
   modelsTimeoutMs?: number;
 };
@@ -106,7 +95,7 @@ function usableRows(models: ModelDetails[] | undefined): Record<string, OpenCode
     if (id.length === 0) {
       continue;
     }
-    const name = [model.displayName, model.displayNameShort].find(nonEmpty) ?? id;
+    const name = modelRowName(model, id);
     rows[id] = {
       id,
       name,
@@ -175,6 +164,16 @@ function hasOverlayCredentials(
   return nonEmpty(apiKey) || nonEmpty(env.CURSOR_API_KEY) || nonEmpty(env.CURSOR_AUTH_TOKEN);
 }
 
+function modelRowName(model: ModelDetails, id: string): string {
+  if (nonEmpty(model.displayName)) {
+    return model.displayName;
+  }
+  if (nonEmpty(model.displayNameShort)) {
+    return model.displayNameShort;
+  }
+  return id;
+}
+
 function buildClientOptions(
   cfg: OpenCodeConfig,
   pluginOptions: CatalogueOverlayOptions,
@@ -183,19 +182,12 @@ function buildClientOptions(
 ): CreateClientOptions {
   const block = cursorBlocks(cfg)[0];
   const settings = block?.options ?? block?.settings;
-  const options: CreateClientOptions = { env };
-  if (apiKey !== undefined) {
-    options.apiKey = apiKey;
-  }
-  const fetch = pluginOptions.fetch ?? settings?.fetch;
-  if (fetch !== undefined) {
-    options.fetch = fetch;
-  }
-  const headers = sanitizeProviderHeaders(pluginOptions.headers ?? settings?.headers);
-  if (headers !== undefined) {
-    options.headers = headers;
-  }
-  return options;
+  return resolvedClientOptions({
+    env,
+    apiKey,
+    fetch: pluginOptions.fetch ?? settings?.fetch,
+    headers: pluginOptions.headers ?? settings?.headers,
+  });
 }
 
 function nonEmpty(value: string | undefined): boolean {
