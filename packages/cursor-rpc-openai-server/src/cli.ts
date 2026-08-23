@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { assertListenReady, loadConfig } from "./config.js";
 import { providerFromEnv } from "./provider.js";
@@ -14,9 +15,17 @@ export async function main(
   await startServer({ argv, env, config, provider });
 }
 
+function resolvedArgvEntry(entry: string): string {
+  try {
+    return realpathSync(entry);
+  } catch {
+    return entry;
+  }
+}
+
 function isDirectRun(): boolean {
   const entry = process.argv[1];
-  return entry !== undefined && import.meta.url === pathToFileURL(entry).href;
+  return entry !== undefined && import.meta.url === pathToFileURL(resolvedArgvEntry(entry)).href;
 }
 
 if (isDirectRun()) {

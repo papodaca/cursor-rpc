@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { text } from "node:stream/consumers";
 import { isAuthorized } from "./auth.js";
 import { assertListenReady, emptyToUndefined, loadConfig, type ConfigSource, type ServerConfig } from "./config.js";
 import {
   HttpError,
   internalError,
   invalidApiKeyError,
+  invalidContentTypeError,
   invalidJsonError,
   notFoundError,
+  payloadTooLargeError,
   writeJson,
 } from "./errors.js";
 import { handleChatCompletion, runPinned, type UpstreamPin } from "./openai/completions.js";
@@ -79,6 +80,9 @@ async function dispatch(
   } catch (error) {
     if (error instanceof HttpError) {
       writeJson(res, error.status, error.body, requestId);
+      if (error.status === 413) {
+        req.destroy();
+      }
       return;
     }
     writeJson(res, 500, internalError, requestId);
@@ -129,6 +133,9 @@ async function route(
   writeJson(res, 404, notFoundError, requestId);
 }
 
+/** POST JSON bodies only. SSE responses stay unbounded via requestTimeout / headersTimeout = 0. */
+export const MAX_JSON_BODY_BYTES = 1024 * 1024;
+
 function pathname(req: IncomingMessage): string {
   const raw = req.url ?? "/";
   const query = raw.indexOf("?");
@@ -140,7 +147,14 @@ function pathname(req: IncomingMessage): string {
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
-  const raw = await text(req);
+  if (!isJsonContentType(req.headers["content-type"])) {
+    throw new HttpError(400, invalidContentTypeError);
+  }
+  const declared = declaredContentLength(req.headers["content-length"]);
+  if (declared !== undefined && declared > MAX_JSON_BODY_BYTES) {
+    throw new HttpError(413, payloadTooLargeError);
+  }
+  const raw = await readBodyLimited(req, MAX_JSON_BODY_BYTES);
   if (raw.trim() === "") {
     return {};
   }
@@ -149,6 +163,45 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   } catch {
     throw new HttpError(400, invalidJsonError);
   }
+}
+
+function isJsonContentType(header: string | string[] | undefined): boolean {
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (raw === undefined) {
+    return false;
+  }
+  const mediaType = raw.split(";", 1)[0]?.trim().toLowerCase();
+  return mediaType === "application/json";
+}
+
+function declaredContentLength(header: string | string[] | undefined): number | undefined {
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (raw === undefined) {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return undefined;
+  }
+  const n = Number(trimmed);
+  if (!Number.isSafeInteger(n)) {
+    return undefined;
+  }
+  return n;
+}
+
+async function readBodyLimited(req: IncomingMessage, maxBytes: number): Promise<string> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.byteLength;
+    if (total > maxBytes) {
+      throw new HttpError(413, payloadTooLargeError);
+    }
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 function closeServer(server: Server): Promise<void> {

@@ -80,6 +80,48 @@ describe("chat completions SSE", () => {
     expect(usageChunk.usage.prompt_tokens).toBe(4);
   });
 
+  it("aborts provider.run() when a real HTTP client cancels before the first SSE chunk", async () => {
+    const aborted = { value: false };
+    let entered: (() => void) | undefined;
+    const runEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const { url } = await start(
+      fakeProvider({
+        run: async (runOptions) => {
+          entered?.();
+          await new Promise<never>((_, reject) => {
+            const signal = runOptions.signal;
+            const fail = () => {
+              aborted.value = true;
+              reject(new CancelledError());
+            };
+            if (signal === undefined) {
+              return;
+            }
+            if (signal.aborted) {
+              fail();
+              return;
+            }
+            signal.addEventListener("abort", fail, { once: true });
+          });
+        },
+      }),
+    );
+    const controller = new AbortController();
+    const pending = fetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ messages: [{ role: "user", content: "hello" }], stream: true }),
+      signal: controller.signal,
+    });
+    await runEntered;
+    controller.abort();
+    await expect(pending).rejects.toThrow();
+    await viWaitFor(() => aborted.value);
+    expect(aborted.value).toBe(true);
+  });
+
   it("aborts the fake run when a real HTTP client cancels mid-SSE", async () => {
     const aborted = { value: false };
     const { url } = await start(

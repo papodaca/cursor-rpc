@@ -1,14 +1,7 @@
-import { conversationHistoryFromTurns, type ClientRunOptions } from "cursor-rpc";
+import { AuthenticationError, PolicyError, conversationHistoryFromTurns, type ClientRunOptions } from "cursor-rpc";
 import { afterEach, describe, expect, it } from "vitest";
-import { type StartedServer } from "../src/server.ts";
-import {
-  AuthenticationError,
-  createCompletion,
-  fakeHandle,
-  fakeProvider,
-  startTestServer,
-  thinkingThenHi,
-} from "./helpers.ts";
+import { MAX_JSON_BODY_BYTES, type StartedServer } from "../src/server.ts";
+import { authHeaders, createCompletion, fakeHandle, fakeProvider, startTestServer, thinkingThenHi } from "./helpers.ts";
 
 const servers: StartedServer[] = [];
 
@@ -145,11 +138,16 @@ describe("chat completions JSON", () => {
     expect(runs).toBe(0);
   });
 
-  it("maps Cursor AuthenticationError to 502 and pins later creates", async () => {
+  it("maps unauthenticated Cursor AuthenticationError to 502 and pins later creates", async () => {
+    let calls = 0;
     const { url } = await start(
       fakeProvider({
         run: async () => {
-          throw new AuthenticationError("invalid Bearer sk-leaked and key_secret");
+          calls += 1;
+          if (calls === 1) {
+            throw new AuthenticationError("invalid Bearer sk-leaked and key_secret", { code: "unauthenticated" });
+          }
+          return fakeHandle([{ type: "text_delta", text: "hi" }, { type: "turn_ended", usage: {} }]);
         },
       }),
     );
@@ -159,6 +157,7 @@ describe("chat completions JSON", () => {
     expect(first.status).toBe(502);
     const firstBody = await first.json();
     expect(firstBody.error.type).toBe("api_error");
+    expect(firstBody.error.code).toBe("cursor_upstream");
     expect(firstBody.error.code).not.toBe("invalid_api_key");
     const dumped = JSON.stringify(firstBody);
     expect(dumped).not.toContain("sk-leaked");
@@ -170,6 +169,88 @@ describe("chat completions JSON", () => {
       messages: [{ role: "user", content: "again" }],
     });
     expect(second.status).toBe(502);
+    expect((await second.json()).error.code).toBe("cursor_upstream");
+    expect(calls).toBe(1);
+  });
+
+  it("maps retryable Cursor AuthenticationError to 503 without pinning later creates", async () => {
+    let calls = 0;
+    const { url } = await start(
+      fakeProvider({
+        run: async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new AuthenticationError("transient auth", { code: "unavailable", isRetryable: true });
+          }
+          return fakeHandle([{ type: "text_delta", text: "hi" }, { type: "turn_ended", usage: {} }]);
+        },
+      }),
+    );
+    const first = await createCompletion(url, {
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(first.status).toBe(503);
+    expect((await first.json()).error.code).toBe("cursor_unavailable");
+
+    const second = await createCompletion(url, {
+      messages: [{ role: "user", content: "again" }],
+    });
+    expect(second.status).toBe(200);
+    expect((await second.json()).choices[0].message.content).toBe("hi");
+    expect(calls).toBe(2);
+  });
+
+  it("maps non-retryable AuthenticationError that is not unauthenticated to 502 without pinning", async () => {
+    let calls = 0;
+    const { url } = await start(
+      fakeProvider({
+        run: async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new AuthenticationError("auth failed", { code: "unavailable" });
+          }
+          return fakeHandle([{ type: "text_delta", text: "hi" }, { type: "turn_ended", usage: {} }]);
+        },
+      }),
+    );
+    const first = await createCompletion(url, {
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(first.status).toBe(502);
+    expect((await first.json()).error.code).toBe("cursor_upstream");
+
+    const second = await createCompletion(url, {
+      messages: [{ role: "user", content: "again" }],
+    });
+    expect(second.status).toBe(200);
+    expect(calls).toBe(2);
+  });
+
+  it("maps Cursor PolicyError to 502 for that request only", async () => {
+    let calls = 0;
+    const { url } = await start(
+      fakeProvider({
+        run: async () => {
+          calls += 1;
+          if (calls === 1) {
+            throw new PolicyError("sign_in_policy_violation");
+          }
+          return fakeHandle([{ type: "text_delta", text: "hi" }, { type: "turn_ended", usage: {} }]);
+        },
+      }),
+    );
+    const first = await createCompletion(url, {
+      messages: [{ role: "user", content: "hi" }],
+    });
+    expect(first.status).toBe(502);
+    expect((await first.json()).error.code).toBe("cursor_upstream");
+
+    const second = await createCompletion(url, {
+      messages: [{ role: "user", content: "again" }],
+    });
+    expect(second.status).toBe(200);
+    expect((await second.json()).choices[0].message.content).toBe("hi");
+    expect(calls).toBe(2);
   });
 
   it("does not let extra body keys widen the ASK pin", async () => {
@@ -225,5 +306,44 @@ describe("chat completions JSON", () => {
     expect(b.status).toBe(200);
     const texts = [(await a.json()).choices[0].message.content, (await b.json()).choices[0].message.content].sort();
     expect(texts).toEqual(["n1", "n2"]);
+  });
+
+  it("returns 413 when Content-Length exceeds the JSON body cap", async () => {
+    let runs = 0;
+    const { url } = await start(
+      fakeProvider({
+        onRun() {
+          runs += 1;
+        },
+      }),
+    );
+    const response = await fetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: "x".repeat(MAX_JSON_BODY_BYTES + 1),
+    });
+    expect(response.status).toBe(413);
+    expect((await response.json()).error.type).toBe("invalid_request_error");
+    expect(runs).toBe(0);
+  });
+
+  it("returns 400 for a text/plain JSON body and does not call run", async () => {
+    let runs = 0;
+    const { url } = await start(
+      fakeProvider({
+        onRun() {
+          runs += 1;
+        },
+      }),
+    );
+    const response = await fetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      headers: authHeaders({ "content-type": "text/plain" }),
+      body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.type).toBe("invalid_request_error");
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    expect(runs).toBe(0);
   });
 });

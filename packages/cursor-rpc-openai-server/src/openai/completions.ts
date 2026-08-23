@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ServerResponse } from "node:http";
-import type { ClientRunOptions, UsageCounts } from "cursor-rpc";
+import type { ClientRunOptions, RunHandle, UsageCounts } from "cursor-rpc";
 import { HttpError, mapCursorError, openaiError, writeJson, type MappedCursorError } from "../errors.js";
 import type { ServerProvider } from "../provider.js";
 import { mapMessages } from "./messages.js";
@@ -31,10 +31,10 @@ export async function handleChatCompletion(options: {
     modelId: model,
     mode: "ask",
   };
-  const handle = await options.provider.run(runOptions);
-  const id = `chatcmpl-${randomUUID()}`;
-  const created = Math.floor(Date.now() / 1000);
   if (!request.stream) {
+    const handle = await options.provider.run(runOptions);
+    const id = `chatcmpl-${randomUUID()}`;
+    const created = Math.floor(Date.now() / 1000);
     const result = await handle.wait();
     writeJson(
       options.res,
@@ -58,13 +58,22 @@ export async function handleChatCompletion(options: {
     return;
   }
 
+  const abort = new AbortController();
+  let handle: RunHandle | undefined;
   const onClose = () => {
     if (!options.res.writableFinished) {
-      handle.abort();
+      abort.abort();
+      handle?.abort();
     }
   };
   options.res.once("close", onClose);
+  if (options.res.destroyed) {
+    onClose();
+  }
   try {
+    handle = await options.provider.run({ ...runOptions, signal: abort.signal });
+    const id = `chatcmpl-${randomUUID()}`;
+    const created = Math.floor(Date.now() / 1000);
     writeSseHeaders(options.res, options.requestId);
     let roleSent = false;
     let usage: UsageCounts = {};

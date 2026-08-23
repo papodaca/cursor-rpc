@@ -43,6 +43,20 @@ export const invalidJsonError = openaiError({
   code: "invalid_json",
 });
 
+export const invalidContentTypeError = openaiError({
+  message: "Content-Type must be application/json",
+  type: "invalid_request_error",
+  param: null,
+  code: null,
+});
+
+export const payloadTooLargeError = openaiError({
+  message: "Request body too large",
+  type: "invalid_request_error",
+  param: null,
+  code: null,
+});
+
 export const notFoundError = openaiError({
   message: "Invalid URL",
   type: "invalid_request_error",
@@ -78,22 +92,11 @@ export function mapCursorError(error: unknown): MappedCursorError {
   if (error instanceof CancelledError) {
     return { kind: "cancelled" };
   }
-  if (error instanceof AuthenticationError || error instanceof PolicyError) {
-    return {
-      kind: "http",
-      pin: true,
-      error: new HttpError(
-        502,
-        openaiError({
-          message: "Cursor upstream request failed; this is not caused by the inbound Bearer token",
-          type: "api_error",
-          param: null,
-          code: "cursor_upstream",
-        }),
-      ),
-    };
-  }
-  if (error instanceof TransportUnsupportedError || (error instanceof StreamError && error.isRetryable)) {
+  if (
+    error instanceof TransportUnsupportedError ||
+    (error instanceof StreamError && error.isRetryable) ||
+    (error instanceof AuthenticationError && error.isRetryable)
+  ) {
     return {
       kind: "http",
       pin: false,
@@ -104,6 +107,21 @@ export function mapCursorError(error: unknown): MappedCursorError {
           type: "api_error",
           param: null,
           code: "cursor_unavailable",
+        }),
+      ),
+    };
+  }
+  if (error instanceof AuthenticationError || error instanceof PolicyError) {
+    return {
+      kind: "http",
+      pin: error instanceof AuthenticationError && error.code === "unauthenticated",
+      error: new HttpError(
+        502,
+        openaiError({
+          message: "Cursor upstream request failed; this is not caused by the inbound Bearer token",
+          type: "api_error",
+          param: null,
+          code: "cursor_upstream",
         }),
       ),
     };
