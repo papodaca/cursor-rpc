@@ -2,6 +2,8 @@ import type { LanguageModelV3, LanguageModelV3CallOptions } from "@ai-sdk/provid
 import type { CursorRpcClient } from "cursor-rpc";
 import { consumeCursorStream, streamCursorRun, toProviderError } from "./stream.js";
 
+export const toolsSupported = true;
+
 export class CursorLanguageModel implements LanguageModelV3 {
   readonly specificationVersion = "v3" as const;
   readonly provider: string;

@@ -218,8 +218,11 @@ describe("stream mapping", () => {
       warnings: expect.arrayContaining([
         expect.objectContaining({ type: "unsupported", feature: "temperature" }),
         expect.objectContaining({ type: "unsupported", feature: "topP" }),
-        expect.objectContaining({ type: "unsupported", feature: "tools" }),
       ]),
+    });
+    expect(parts[0]).toEqual({
+      type: "stream-start",
+      warnings: expect.not.arrayContaining([expect.objectContaining({ feature: "tools" })]),
     });
     const textId = parts.find((part) => part.type === "text-start")?.id;
     expect(textId).toEqual(expect.any(String));

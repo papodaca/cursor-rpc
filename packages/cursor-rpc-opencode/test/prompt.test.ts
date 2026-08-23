@@ -98,7 +98,7 @@ describe("prompt mapping", () => {
     expect(historyText(messages[1])).toBe("4");
   });
 
-  it("forwards abortSignal and does not pass tools as mcpTools", async () => {
+  it("forwards abortSignal and does not set exec handlers", async () => {
     const abortSignal = new AbortController().signal;
     const captured = await captureRun([user("hi")], {
       abortSignal,
@@ -108,12 +108,14 @@ describe("prompt mapping", () => {
     });
 
     expect(captured.signal).toBe(abortSignal);
-    expect(captured.mcpTools).toBeUndefined();
+    expect(captured.mcpTools?.[0]?.name).toBe("lookup");
+    expect(captured.mcpTools?.[0]?.toolName).toBe("lookup");
+    expect(captured.handlers).toBeUndefined();
     expect(captured.handlers?.onExec).toBeUndefined();
     expect(captured.handlers?.onInteraction).toBeUndefined();
   });
 
-  it("skips file and tool parts with warnings rather than hanging the run", async () => {
+  it("skips file parts and maps tool-call / tool-result into history", async () => {
     const captured = await captureRun([
       user("see this"),
       {
@@ -135,6 +137,8 @@ describe("prompt mapping", () => {
     ]);
 
     expect(captured.prompt).toBe("continue");
-    expect(captured.conversationHistory?.messages.some((message) => message.message.case === "tool")).toBeFalsy();
+    expect(captured.conversationHistory?.messages.some((message) => message.message.case === "tool")).toBe(true);
+    const historyJson = JSON.stringify(captured.conversationHistory);
+    expect(historyJson).not.toMatch(/image\/png|x\.png/);
   });
 });

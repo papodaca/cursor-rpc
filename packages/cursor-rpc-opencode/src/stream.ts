@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import {
   APICallError,
   type LanguageModelV3CallOptions,
   type LanguageModelV3Content,
   type LanguageModelV3FinishReason,
+  type LanguageModelV3FunctionTool,
   type LanguageModelV3GenerateResult,
   type LanguageModelV3StreamPart,
   type LanguageModelV3StreamResult,
@@ -15,6 +17,7 @@ import {
   StreamError,
   type ClientRunOptions,
   type CursorRpcClient,
+  type McpToolDefinition,
   type RunEvent,
   type RunHandle,
   type UsageCounts,
@@ -32,7 +35,6 @@ const UNSUPPORTED_SAMPLING = [
   "maxOutputTokens",
   "stopSequences",
   "seed",
-  "tools",
   "toolChoice",
 ] as const satisfies ReadonlyArray<keyof LanguageModelV3CallOptions>;
 
@@ -54,7 +56,7 @@ export async function streamCursorRun(options: {
 }): Promise<LanguageModelV3StreamResult> {
   const mapped = mapPrompt(options.call.prompt);
   const warnings = [...callWarnings(options.call), ...mapped.warnings];
-  const runOptions = clientRunOptions(options.modelId, options.call.abortSignal, mapped);
+  const runOptions = clientRunOptions(options.modelId, options.call, mapped);
 
   let handle: RunHandle;
   try {
@@ -64,7 +66,7 @@ export async function streamCursorRun(options: {
   }
 
   return {
-    stream: pumpHandle(handle, options.call.abortSignal, warnings),
+    stream: pumpHandle(handle, options.call.abortSignal, warnings, advertisedToolNames(options.call.tools)),
   };
 }
 
@@ -102,6 +104,9 @@ export async function consumeCursorStream(
         case "reasoning-end":
           content.push({ type: "reasoning", text: reasonings.get(part.id) ?? "" });
           break;
+        case "tool-call":
+          content.push(part);
+          break;
         case "finish":
           finishReason = part.finishReason;
           usage = part.usage;
@@ -125,15 +130,15 @@ export async function consumeCursorStream(
 
 function clientRunOptions(
   modelId: string,
-  signal: AbortSignal | undefined,
+  call: LanguageModelV3CallOptions,
   mapped: ReturnType<typeof mapPrompt>,
 ): ClientRunOptions {
   const options: ClientRunOptions = {
     prompt: mapped.prompt,
     modelId,
   };
-  if (signal !== undefined) {
-    options.signal = signal;
+  if (call.abortSignal !== undefined) {
+    options.signal = call.abortSignal;
   }
   if (mapped.customSystemPrompt !== undefined) {
     options.customSystemPrompt = mapped.customSystemPrompt;
@@ -141,7 +146,39 @@ function clientRunOptions(
   if (mapped.conversationHistory !== undefined) {
     options.conversationHistory = mapped.conversationHistory;
   }
+  const mcpTools = mapMcpTools(call.tools);
+  if (mcpTools !== undefined) {
+    options.mcpTools = mcpTools;
+  }
   return options;
+}
+
+function mapMcpTools(tools: LanguageModelV3CallOptions["tools"]): McpToolDefinition[] | undefined {
+  if (tools === undefined || tools.length === 0) {
+    return undefined;
+  }
+  const mapped: McpToolDefinition[] = [];
+  for (const tool of tools) {
+    if (tool.type !== "function") {
+      continue;
+    }
+    mapped.push({
+      name: tool.name,
+      toolName: tool.name,
+      providerIdentifier: "opencode",
+      description: tool.description ?? "",
+      inputSchemaJson: JSON.stringify(tool.inputSchema),
+    } as McpToolDefinition);
+  }
+  return mapped.length === 0 ? undefined : mapped;
+}
+
+function advertisedToolNames(tools: LanguageModelV3CallOptions["tools"]): Set<string> {
+  return new Set(
+    (tools ?? [])
+      .filter((tool): tool is LanguageModelV3FunctionTool => tool.type === "function")
+      .map((tool) => tool.name),
+  );
 }
 
 function callWarnings(call: LanguageModelV3CallOptions): SharedV3Warning[] {
@@ -165,6 +202,7 @@ function pumpHandle(
   handle: RunHandle,
   abortSignal: AbortSignal | undefined,
   warnings: SharedV3Warning[],
+  advertisedTools: ReadonlySet<string>,
 ): ReadableStream<LanguageModelV3StreamPart> {
   return new ReadableStream<LanguageModelV3StreamPart>({
     async start(controller) {
@@ -192,13 +230,27 @@ function pumpHandle(
           reasoningId = undefined;
         }
       };
+      const closeStream = (): void => {
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+      };
 
       try {
         for await (const event of handle) {
           if (abortSignal?.aborted === true) {
             throw new CancelledError();
           }
+          if (finished) {
+            break;
+          }
           applyEvent(event, {
+            abortHandle: () => {
+              handle.abort();
+            },
+            advertisedTools,
             closeReasoning,
             closeText,
             controller,
@@ -217,7 +269,11 @@ function pumpHandle(
             },
             reasoningId: () => reasoningId,
             textId: () => textId,
+            warnings,
           });
+          if (finished) {
+            break;
+          }
         }
         if (!finished) {
           if (abortSignal?.aborted === true) {
@@ -225,11 +281,15 @@ function pumpHandle(
           }
           emitMissingTurnEnded(controller, closeReasoning, closeText, warnings);
         }
-        controller.close();
+        closeStream();
       } catch (error) {
+        if (finished && abortSignal?.aborted !== true) {
+          closeStream();
+          return;
+        }
         if (isMissingTurnEnded(error) && !finished && abortSignal?.aborted !== true) {
           emitMissingTurnEnded(controller, closeReasoning, closeText, warnings);
-          controller.close();
+          closeStream();
           return;
         }
         const mapped = toProviderError(normalizeRunError(error, abortSignal));
@@ -252,6 +312,8 @@ function pumpHandle(
 function applyEvent(
   event: RunEvent,
   ctx: {
+    abortHandle: () => void;
+    advertisedTools: ReadonlySet<string>;
     closeReasoning: () => void;
     closeText: () => void;
     controller: ReadableStreamDefaultController<LanguageModelV3StreamPart>;
@@ -260,6 +322,7 @@ function applyEvent(
     onFinish: () => void;
     reasoningId: () => string | undefined;
     textId: () => string | undefined;
+    warnings: SharedV3Warning[];
   },
 ): void {
   switch (event.type) {
@@ -294,9 +357,59 @@ function applyEvent(
         finishReason: { unified: "stop", raw: "turn_ended" },
       });
       break;
+    case "mcp_args":
+      finishMcpArgs(event, ctx);
+      break;
     default:
       break;
   }
+}
+
+function finishMcpArgs(
+  event: Extract<RunEvent, { type: "mcp_args" }>,
+  ctx: {
+    abortHandle: () => void;
+    advertisedTools: ReadonlySet<string>;
+    closeReasoning: () => void;
+    closeText: () => void;
+    controller: ReadableStreamDefaultController<LanguageModelV3StreamPart>;
+    onFinish: () => void;
+    warnings: SharedV3Warning[];
+  },
+): void {
+  ctx.closeReasoning();
+  ctx.closeText();
+  if (!ctx.advertisedTools.has(event.toolName)) {
+    ctx.warnings.push({
+      type: "other",
+      message: `unadvertised mcp_args for ${event.toolName}`,
+    });
+    ctx.onFinish();
+    ctx.controller.enqueue({
+      type: "finish",
+      usage: mapUsage(),
+      finishReason: { unified: "other", raw: "mcp_args" },
+    });
+    ctx.abortHandle();
+    return;
+  }
+  const id = randomUUID();
+  ctx.controller.enqueue({ type: "tool-input-start", id, toolName: event.toolName });
+  ctx.controller.enqueue({ type: "tool-input-delta", id, delta: event.argsJson });
+  ctx.controller.enqueue({ type: "tool-input-end", id });
+  ctx.controller.enqueue({
+    type: "tool-call",
+    toolCallId: id,
+    toolName: event.toolName,
+    input: event.argsJson,
+  });
+  ctx.onFinish();
+  ctx.controller.enqueue({
+    type: "finish",
+    usage: mapUsage(),
+    finishReason: { unified: "tool-calls", raw: "mcp_args" },
+  });
+  ctx.abortHandle();
 }
 
 function emitMissingTurnEnded(
