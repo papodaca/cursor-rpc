@@ -95,6 +95,7 @@ describe("workspace link", () => {
       path.join(libDir, "tsconfig.json"),
       path.join(piDir, "tsconfig.json"),
       path.join(toolsDir, "tsconfig.json"),
+      path.join(root, "packages", "cursor-rpc-opencode", "tsconfig.json"),
       path.join(serverDir, "tsconfig.json"),
     ];
     for (const file of configs) {
