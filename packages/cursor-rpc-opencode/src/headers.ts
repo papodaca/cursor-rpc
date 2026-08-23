@@ -1,4 +1,4 @@
-const SENSITIVE_HEADER = /api-?key|token|secret|authorization/i;
+const SENSITIVE_HEADER = /api[_-]?key|token|secret|authorization/i;
 
 export function sanitizeProviderHeaders(
   headers: Headers | Record<string, string> | undefined,
@@ -9,7 +9,7 @@ export function sanitizeProviderHeaders(
   const input = new Headers(headers);
   const output = new Headers();
   for (const [name, value] of input.entries()) {
-    if (name === "cookie" || SENSITIVE_HEADER.test(name)) {
+    if (name === "cookie" || name === "set-cookie" || SENSITIVE_HEADER.test(name)) {
       continue;
     }
     output.set(name, value);

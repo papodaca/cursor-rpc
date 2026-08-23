@@ -120,8 +120,10 @@ describe("createCursor factory", () => {
         Authorization: "Bearer secret-token",
         Cookie: "a=b",
         "x-api-key": "hidden",
+        x_api_key: "hidden",
         "x-auth-token": "hidden",
         "x-secret": "hidden",
+        "set-cookie": "session=leaked",
         "x-request-id": "keep-me",
       },
     });
@@ -143,8 +145,10 @@ describe("createCursor factory", () => {
     expect(headers?.get("authorization")).toBeNull();
     expect(headers?.get("cookie")).toBeNull();
     expect(headers?.get("x-api-key")).toBeNull();
+    expect(headers?.get("x-api_key")).toBeNull();
     expect(headers?.get("x-auth-token")).toBeNull();
     expect(headers?.get("x-secret")).toBeNull();
+    expect(headers?.get("set-cookie")).toBeNull();
     expect(headers?.get("x-request-id")).toBe("keep-me");
   });
 
