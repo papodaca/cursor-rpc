@@ -1,6 +1,7 @@
 import { Server } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { startServer, type StartedServer } from "../src/server.ts";
+import { tempResponsesDbPath } from "./helpers.ts";
 
 const INBOUND_KEY = "sk-inbound-secret";
 const CURSOR_TOKEN = "key_planted_cursor";
@@ -22,6 +23,7 @@ async function start(env: Record<string, string | undefined> = {}, argv: string[
       CURSOR_RPC_OPENAI_API_KEY: INBOUND_KEY,
       CURSOR_RPC_OPENAI_HOST: "127.0.0.1",
       CURSOR_RPC_OPENAI_PORT: "0",
+      CURSOR_RPC_OPENAI_RESPONSES_DB: tempResponsesDbPath(),
       ...env,
     },
     argv,

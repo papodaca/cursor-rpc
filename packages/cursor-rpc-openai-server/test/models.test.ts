@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { startServer, type StartedServer } from "../src/server.ts";
 import { catalogueView, type ServerProvider } from "../src/provider.ts";
 import { resolveCreateModel } from "../src/openai/models.ts";
+import { tempResponsesDbPath } from "./helpers.ts";
 
 const INBOUND_KEY = "sk-inbound-secret";
 const servers: StartedServer[] = [];
@@ -45,6 +46,7 @@ async function start(provider: ServerProvider = fakeProvider()) {
       CURSOR_RPC_OPENAI_API_KEY: INBOUND_KEY,
       CURSOR_RPC_OPENAI_HOST: "127.0.0.1",
       CURSOR_RPC_OPENAI_PORT: "0",
+      CURSOR_RPC_OPENAI_RESPONSES_DB: tempResponsesDbPath(),
     },
     provider,
   });

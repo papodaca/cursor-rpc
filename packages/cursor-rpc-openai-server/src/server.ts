@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isAuthorized } from "./auth.js";
-import { assertListenReady, emptyToUndefined, loadConfig, type ConfigSource, type ServerConfig } from "./config.js";
+import {
+  assertListenReady,
+  emptyToUndefined,
+  loadConfig,
+  resolveResponsesDbPath,
+  type ConfigSource,
+  type ServerConfig,
+} from "./config.js";
 import {
   HttpError,
   internalError,
@@ -9,11 +16,13 @@ import {
   invalidContentTypeError,
   invalidJsonError,
   notFoundError,
+  openaiError,
   payloadTooLargeError,
   writeJson,
 } from "./errors.js";
 import { handleChatCompletion, runPinned, type UpstreamPin } from "./openai/completions.js";
 import { listModelsResponse, modelNotFoundError, toOpenAIModel } from "./openai/models.js";
+import { openResponseStore, type ResponseStore } from "./openai/response-store.js";
 import { emptyProvider, type ServerProvider } from "./provider.js";
 
 export type StartedServer = {
@@ -29,13 +38,21 @@ export type StartServerOptions = ConfigSource & {
   provider?: ServerProvider;
 };
 
+const responseNotFoundError = openaiError({
+  message: "Response not found",
+  type: "invalid_request_error",
+  param: null,
+  code: null,
+});
+
 export async function startServer(options: StartServerOptions = {}): Promise<StartedServer> {
   const config = options.config ?? loadConfig(options);
   assertListenReady(config);
+  const store = openResponseStore(resolveResponsesDbPath({ env: options.env ?? process.env }));
   const provider = options.provider ?? emptyProvider();
   const pin: UpstreamPin = {};
   const server = createServer((req, res) => {
-    void dispatch(req, res, config, provider, pin);
+    void dispatch(req, res, config, provider, pin, store);
   });
   server.requestTimeout = 0;
   server.headersTimeout = 0;
@@ -43,22 +60,32 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   try {
     await bind(server, config.host, config.port);
   } catch (error) {
+    store.close();
     server.close();
     throw error;
   }
   const address = server.address();
   if (address === null || typeof address === "string") {
+    store.close();
     await closeServer(server);
     throw new Error("failed to bind HTTP server");
   }
   const url = bindUrl(config.host, address.port);
   console.log(url);
+  let closed = false;
   return {
     url,
     port: address.port,
     host: config.host,
     server,
-    close: () => closeServer(server),
+    close: async () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
+      await closeServer(server);
+      store.close();
+    },
   };
 }
 
@@ -68,6 +95,7 @@ async function dispatch(
   config: ServerConfig,
   provider: ServerProvider,
   pin: UpstreamPin,
+  store: ResponseStore,
 ): Promise<void> {
   const requestId = randomUUID();
   res.setHeader("x-request-id", requestId);
@@ -76,7 +104,7 @@ async function dispatch(
       writeJson(res, 401, invalidApiKeyError, requestId);
       return;
     }
-    await route(req, res, provider, pin, requestId);
+    await route(req, res, provider, pin, store, requestId);
   } catch (error) {
     if (error instanceof HttpError) {
       writeJson(res, error.status, error.body, requestId);
@@ -94,13 +122,24 @@ async function route(
   res: ServerResponse,
   provider: ServerProvider,
   pin: UpstreamPin,
+  store: ResponseStore,
   requestId: string,
 ): Promise<void> {
+  const path = pathname(req);
+  if (req.method === "GET" && path.startsWith("/v1/responses/")) {
+    const id = decodeURIComponent(path.slice("/v1/responses/".length));
+    const stored = store.get(id);
+    if (stored === undefined) {
+      writeJson(res, 404, responseNotFoundError, requestId);
+      return;
+    }
+    writeJson(res, 200, stored, requestId);
+    return;
+  }
   if (pin.error !== undefined) {
     writeJson(res, pin.error.status, pin.error.body, requestId);
     return;
   }
-  const path = pathname(req);
   if (req.method === "GET" && path === "/v1/models") {
     const catalogue = await runPinned(pin, () => provider.models());
     writeJson(res, 200, listModelsResponse(catalogue), requestId);

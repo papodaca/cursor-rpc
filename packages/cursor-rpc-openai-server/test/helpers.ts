@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { AuthenticationError, conversationHistoryFromTurns, type ClientRunOptions, type RunEvent, type RunHandle } from "cursor-rpc";
 import { startServer } from "../src/server.ts";
 import type { ServerProvider } from "../src/provider.ts";
@@ -56,12 +59,21 @@ export function fakeProvider(options: {
   };
 }
 
-export async function startTestServer(provider: ServerProvider = fakeProvider()) {
+export function tempResponsesDbPath(): string {
+  return join(mkdtempSync(join(tmpdir(), "cursor-rpc-openai-responses-")), "responses.sqlite");
+}
+
+export async function startTestServer(
+  provider: ServerProvider = fakeProvider(),
+  env: Record<string, string | undefined> = {},
+) {
   return startServer({
     env: {
       CURSOR_RPC_OPENAI_API_KEY: INBOUND_KEY,
       CURSOR_RPC_OPENAI_HOST: "127.0.0.1",
       CURSOR_RPC_OPENAI_PORT: "0",
+      ...env,
+      CURSOR_RPC_OPENAI_RESPONSES_DB: env.CURSOR_RPC_OPENAI_RESPONSES_DB ?? tempResponsesDbPath(),
     },
     provider,
   });

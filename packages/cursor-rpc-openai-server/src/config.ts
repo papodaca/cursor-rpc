@@ -1,3 +1,6 @@
+import { homedir } from "node:os";
+import { isAbsolute, resolve } from "node:path";
+
 export type ServerConfig = {
   host: string;
   port: number;
@@ -83,4 +86,42 @@ export function emptyToUndefined(value: string | undefined): string | undefined 
     return undefined;
   }
   return value;
+}
+
+export type ResponsesDbPathSource = {
+  env?: Record<string, string | undefined>;
+  cwd?: string;
+};
+
+export function resolveResponsesDbPath(source: ResponsesDbPathSource = {}): string {
+  const env = source.env ?? process.env;
+  const cwd = source.cwd ?? process.cwd();
+  const configured = env.CURSOR_RPC_OPENAI_RESPONSES_DB;
+  if (configured === undefined) {
+    return defaultResponsesDbPath(env, cwd);
+  }
+  return normalizeResponsesDbPath(configured, cwd);
+}
+
+export function normalizeResponsesDbPath(value: string | undefined, cwd = process.cwd()): string {
+  if (value === undefined || value.trim() === "") {
+    throw new Error("CURSOR_RPC_OPENAI_RESPONSES_DB must not be empty");
+  }
+  const trimmed = value.trim();
+  if (trimmed === ":memory:") {
+    return trimmed;
+  }
+  if (/^file:/i.test(trimmed) || trimmed.includes("?")) {
+    throw new Error("CURSOR_RPC_OPENAI_RESPONSES_DB must be a filesystem path, not a SQLite URI");
+  }
+  return isAbsolute(trimmed) ? trimmed : resolve(cwd, trimmed);
+}
+
+function defaultResponsesDbPath(env: Record<string, string | undefined>, cwd: string): string {
+  const xdg = emptyToUndefined(env.XDG_DATA_HOME);
+  if (xdg !== undefined) {
+    return resolve(cwd, xdg, "cursor-rpc-openai-server", "responses.sqlite");
+  }
+  const home = emptyToUndefined(env.HOME) ?? homedir();
+  return resolve(home, ".local", "share", "cursor-rpc-openai-server", "responses.sqlite");
 }

@@ -49,6 +49,7 @@ describe("bin", () => {
         CURSOR_RPC_OPENAI_API_KEY: INBOUND_KEY,
         CURSOR_RPC_OPENAI_HOST: "127.0.0.1",
         CURSOR_RPC_OPENAI_PORT: "0",
+        CURSOR_RPC_OPENAI_RESPONSES_DB: join(prefix, "responses.sqlite"),
       },
     });
     children.push(child);
