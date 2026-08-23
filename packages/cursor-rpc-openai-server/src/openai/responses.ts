@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
 import type { ServerResponse } from "node:http";
-import type { ClientRunOptions, UsageCounts } from "cursor-rpc";
+import type { ClientRunOptions, RunHandle, UsageCounts } from "cursor-rpc";
 import { HttpError, internalError, mapCursorError, openaiError, writeJson, type MappedCursorError } from "../errors.js";
 import type { ServerProvider } from "../provider.js";
 import { modelNotFoundError, resolveCreateModel } from "./models.js";
 import type { InsertResponseRow, ResponseStore } from "./response-store.js";
 import { mapResponsesInput, rejectUnsupportedInputItems } from "./responses-input.js";
+import { createResponsesSseWriter, writeResponsesSseHeaders, type ResponsesSseWriter } from "./responses-sse.js";
 
 const ASK_MODE = "ask" as const;
 const ENTROPY_BYTES = 16;
@@ -17,6 +18,7 @@ export type ResponsesPin = {
 export type PreparedResponseCreate = {
   model: string;
   store: boolean;
+  stream: boolean;
   instructions: string | null;
   previousResponseId: string | null;
   runOptions: ClientRunOptions;
@@ -28,6 +30,7 @@ type ParsedCreateRequest = {
   model: string | undefined;
   instructions: string | undefined;
   store: boolean;
+  stream: boolean;
   previousResponseId: string | undefined;
 };
 
@@ -58,6 +61,7 @@ export async function prepareResponseCreate(options: {
   return {
     model,
     store: request.store,
+    stream: request.stream,
     instructions: request.instructions ?? null,
     previousResponseId: request.previousResponseId ?? null,
     runOptions,
@@ -80,6 +84,19 @@ export async function handleCreateResponse(options: {
   });
   const ids = mintIds();
   const createdAt = Math.floor(Date.now() / 1000);
+  if (prepared.stream) {
+    await handleCreateResponseStream({
+      res: options.res,
+      requestId: options.requestId,
+      provider: options.provider,
+      pin: options.pin,
+      store: options.store,
+      prepared,
+      ids,
+      createdAt,
+    });
+    return;
+  }
   let text: string;
   let usage: UsageCounts;
   try {
@@ -118,6 +135,195 @@ export async function handleCreateResponse(options: {
   writeJson(options.res, 200, response, options.requestId);
 }
 
+async function handleCreateResponseStream(options: {
+  res: ServerResponse;
+  requestId: string;
+  provider: ServerProvider;
+  pin: ResponsesPin;
+  store: ResponseStore;
+  prepared: PreparedResponseCreate;
+  ids: { responseId: string; messageId: string };
+  createdAt: number;
+}): Promise<void> {
+  const abort = new AbortController();
+  let handle: RunHandle | undefined;
+  const onClose = () => {
+    if (!options.res.writableFinished) {
+      abort.abort();
+      handle?.abort();
+    }
+  };
+  options.res.once("close", onClose);
+  if (options.res.destroyed) {
+    onClose();
+  }
+  let writer: ResponsesSseWriter | undefined;
+  try {
+    handle = await options.provider.run({ ...options.prepared.runOptions, signal: abort.signal });
+    writeResponsesSseHeaders(options.res, options.requestId);
+    writer = createResponsesSseWriter();
+    const inProgress = inProgressResponse({
+      id: options.ids.responseId,
+      createdAt: options.createdAt,
+      model: options.prepared.model,
+      instructions: options.prepared.instructions,
+      store: options.prepared.store,
+      previousResponseId: options.prepared.previousResponseId,
+    });
+    writer.emit(options.res, { type: "response.created", response: inProgress });
+    writer.emit(options.res, { type: "response.in_progress", response: inProgress });
+    writer.emit(options.res, {
+      type: "response.output_item.added",
+      output_index: 0,
+      item: assistantMessage(options.ids.messageId, "in_progress"),
+    });
+    writer.emit(options.res, {
+      type: "response.content_part.added",
+      item_id: options.ids.messageId,
+      output_index: 0,
+      content_index: 0,
+      part: outputTextPart(""),
+    });
+    let text = "";
+    let usage: UsageCounts | undefined;
+    for await (const event of handle) {
+      if (event.type === "turn_ended") {
+        usage = event.usage;
+        continue;
+      }
+      if (event.type !== "text_delta") {
+        continue;
+      }
+      text += event.text;
+      writer.emit(options.res, {
+        type: "response.output_text.delta",
+        item_id: options.ids.messageId,
+        output_index: 0,
+        content_index: 0,
+        delta: event.text,
+        logprobs: [],
+      });
+    }
+    const completed = completedResponse({
+      id: options.ids.responseId,
+      messageId: options.ids.messageId,
+      createdAt: options.createdAt,
+      model: options.prepared.model,
+      text,
+      usage,
+      instructions: options.prepared.instructions,
+      store: options.prepared.store,
+      previousResponseId: options.prepared.previousResponseId,
+    });
+    persistRow(options.store, {
+      id: options.ids.responseId,
+      status: "completed",
+      previousResponseId: options.prepared.previousResponseId,
+      model: options.prepared.model,
+      instructions: options.prepared.instructions,
+      store: options.prepared.store,
+      createdAt: options.createdAt,
+      response: completed,
+      transcript: { user: options.prepared.userText, assistant: text },
+    });
+    writer.emit(options.res, {
+      type: "response.output_text.done",
+      item_id: options.ids.messageId,
+      output_index: 0,
+      content_index: 0,
+      text,
+      logprobs: [],
+    });
+    writer.emit(options.res, {
+      type: "response.content_part.done",
+      item_id: options.ids.messageId,
+      output_index: 0,
+      content_index: 0,
+      part: outputTextPart(text),
+    });
+    writer.emit(options.res, {
+      type: "response.output_item.done",
+      output_index: 0,
+      item: assistantMessage(options.ids.messageId, "completed", text),
+    });
+    writer.emit(options.res, { type: "response.completed", response: completed });
+    if (!options.res.writableEnded) {
+      options.res.end();
+    }
+  } catch (error) {
+    settleCreateStreamError({
+      error,
+      res: options.res,
+      pin: options.pin,
+      store: options.store,
+      prepared: options.prepared,
+      ids: options.ids,
+      createdAt: options.createdAt,
+      writer,
+    });
+  } finally {
+    options.res.off("close", onClose);
+  }
+}
+
+function settleCreateStreamError(options: {
+  error: unknown;
+  res: ServerResponse;
+  pin: ResponsesPin;
+  store: ResponseStore;
+  prepared: PreparedResponseCreate;
+  ids: { responseId: string; messageId: string };
+  createdAt: number;
+  writer: ResponsesSseWriter | undefined;
+}): void {
+  const mapped = mapCursorError(options.error);
+  if (mapped.kind === "cancelled") {
+    if (!options.res.writableEnded) {
+      options.res.end();
+    }
+    return;
+  }
+  const httpError = applyMappedError(mapped, options.pin);
+  persistFailed(options.store, options.prepared, options.ids.responseId, options.createdAt, httpError, mapped.kind);
+  if (!options.res.headersSent) {
+    throw httpError;
+  }
+  if (options.writer !== undefined) {
+    emitStreamFailure(options.res, options.writer, options.ids, options.createdAt, options.prepared, httpError);
+  }
+  if (!options.res.writableEnded) {
+    options.res.end();
+  }
+}
+
+function emitStreamFailure(
+  res: ServerResponse,
+  writer: ResponsesSseWriter,
+  ids: { responseId: string; messageId: string },
+  createdAt: number,
+  prepared: PreparedResponseCreate,
+  httpError: HttpError,
+): void {
+  writer.emit(res, {
+    type: "response.failed",
+    response: failedResponse({
+      id: ids.responseId,
+      createdAt,
+      model: prepared.model,
+      instructions: prepared.instructions,
+      store: prepared.store,
+      previousResponseId: prepared.previousResponseId,
+      error: httpError.body.error,
+    }),
+  });
+  writer.emit(res, {
+    type: "error",
+    code: httpError.body.error.code,
+    message: httpError.body.error.message,
+    param: httpError.body.error.param,
+  });
+}
+
 function parseCreateRequest(body: unknown): ParsedCreateRequest {
   if (!isRecord(body)) {
     throw new HttpError(
@@ -137,6 +343,7 @@ function parseCreateRequest(body: unknown): ParsedCreateRequest {
     model: typeof body.model === "string" ? body.model : undefined,
     instructions: typeof body.instructions === "string" ? body.instructions : undefined,
     store: body.store !== false,
+    stream: body.stream === true,
     previousResponseId:
       typeof body.previous_response_id === "string" && body.previous_response_id.length > 0
         ? body.previous_response_id
@@ -188,15 +395,7 @@ function completedResponse(options: {
     created_at: options.createdAt,
     status: "completed",
     model: options.model,
-    output: [
-      {
-        id: options.messageId,
-        type: "message",
-        status: "completed",
-        role: "assistant",
-        content: [{ type: "output_text", text: options.text, annotations: [] }],
-      },
-    ],
+    output: [assistantMessage(options.messageId, "completed", options.text)],
     usage: toUsage(options.usage),
     instructions: options.instructions,
     store: options.store,
@@ -206,6 +405,77 @@ function completedResponse(options: {
     tools: [],
     text: { format: { type: "text" } },
   };
+}
+
+function inProgressResponse(options: {
+  id: string;
+  createdAt: number;
+  model: string;
+  instructions: string | null;
+  store: boolean;
+  previousResponseId: string | null;
+}): Record<string, unknown> {
+  return {
+    id: options.id,
+    object: "response",
+    created_at: options.createdAt,
+    status: "in_progress",
+    model: options.model,
+    output: [],
+    usage: null,
+    instructions: options.instructions,
+    store: options.store,
+    previous_response_id: options.previousResponseId,
+    error: null,
+    incomplete_details: null,
+    tools: [],
+    text: { format: { type: "text" } },
+  };
+}
+
+function failedResponse(options: {
+  id: string;
+  createdAt: number;
+  model: string;
+  instructions: string | null;
+  store: boolean;
+  previousResponseId: string | null;
+  error: { message: string; type: string; param: string | null; code: string | null };
+}): Record<string, unknown> {
+  return {
+    id: options.id,
+    object: "response",
+    created_at: options.createdAt,
+    status: "failed",
+    model: options.model,
+    output: [],
+    usage: toUsage(undefined),
+    instructions: options.instructions,
+    store: options.store,
+    previous_response_id: options.previousResponseId,
+    error: options.error,
+    incomplete_details: null,
+    tools: [],
+    text: { format: { type: "text" } },
+  };
+}
+
+function assistantMessage(
+  id: string,
+  status: "in_progress" | "completed",
+  text?: string,
+): Record<string, unknown> {
+  return {
+    id,
+    type: "message",
+    status,
+    role: "assistant",
+    content: text === undefined ? [] : [outputTextPart(text)],
+  };
+}
+
+function outputTextPart(text: string): { type: "output_text"; text: string; annotations: unknown[] } {
+  return { type: "output_text", text, annotations: [] };
 }
 
 function persistRow(store: ResponseStore, row: InsertResponseRow): void {
@@ -239,22 +509,15 @@ function persistFailed(
       instructions: prepared.instructions,
       store: prepared.store,
       createdAt,
-      response: {
+      response: failedResponse({
         id,
-        object: "response",
-        created_at: createdAt,
-        status: "failed",
+        createdAt,
         model: prepared.model,
-        output: [],
-        usage: toUsage(undefined),
         instructions: prepared.instructions,
         store: prepared.store,
-        previous_response_id: prepared.previousResponseId,
+        previousResponseId: prepared.previousResponseId,
         error: httpError.body.error,
-        incomplete_details: null,
-        tools: [],
-        text: { format: { type: "text" } },
-      },
+      }),
       transcript: { user: prepared.userText, assistant: "" },
     });
   } catch {
