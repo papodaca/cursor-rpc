@@ -6,7 +6,7 @@ import OpenAI, { AuthenticationError, BadRequestError, NotFoundError } from "ope
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/cli.ts";
 import type { StartedServer } from "../src/server.ts";
-import { fakeProvider, INBOUND_KEY, startTestServer, thinkingThenHi } from "./helpers.ts";
+import { fakeProvider, INBOUND_KEY, startTestServer, tempResponsesDbPath, thinkingThenHi } from "./helpers.ts";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8787/v1";
 const servers: StartedServer[] = [];
@@ -18,8 +18,11 @@ afterEach(async () => {
   }
 });
 
-async function start(provider = fakeProvider({ events: thinkingThenHi() })) {
-  const started = await startTestServer(provider);
+async function start(
+  provider = fakeProvider({ events: thinkingThenHi() }),
+  env: Record<string, string | undefined> = {},
+) {
+  const started = await startTestServer(provider, env);
   servers.push(started);
   return started;
 }
@@ -131,6 +134,147 @@ describe("official OpenAI SDK contract", () => {
   });
 });
 
+describe("official OpenAI SDK Responses contract", () => {
+  it("creates JSON, streams typed events, retrieves, and chains previous_response_id", async () => {
+    const { url } = await start();
+    const client = sdk(url);
+
+    const created = await client.responses.create({
+      model: "composer-2",
+      input: "hello",
+    });
+    expect(created.object).toBe("response");
+    expect(created.status).toBe("completed");
+    expect(created.id).toMatch(/^resp_[A-Za-z0-9]+$/);
+    expect(assistantText(created)).toBe("hi");
+
+    const retrieved = await client.responses.retrieve(created.id);
+    expect(retrieved.id).toBe(created.id);
+    expect(retrieved.object).toBe("response");
+    expect(assistantText(retrieved)).toBe("hi");
+
+    const chained = await client.responses.create({
+      model: "composer-2",
+      input: "next",
+      previous_response_id: created.id,
+    });
+    expect(chained.status).toBe("completed");
+    expect(chained.previous_response_id).toBe(created.id);
+
+    const stream = await client.responses.create({
+      model: "composer-2",
+      input: "hello",
+      stream: true,
+    });
+    const types: string[] = [];
+    let streamed = "";
+    for await (const event of stream) {
+      types.push(event.type);
+      expect(event.type).not.toBe("chat.completion.chunk");
+      if (event.type === "response.output_text.delta") {
+        streamed += event.delta;
+      }
+    }
+    expect(types).toContain("response.created");
+    expect(types).toContain("response.completed");
+    expect(types).not.toContain("chat.completion.chunk");
+    expect(streamed).toBe("hi");
+  });
+
+  it("maps Responses tools, unknown model, missing previous, store:false chain, and unknown retrieve to SDK errors", async () => {
+    const { url } = await start();
+    const client = sdk(url);
+
+    await expect(
+      client.responses.create({
+        model: "composer-2",
+        input: "hello",
+        tools: [{ type: "function", name: "x", parameters: { type: "object" }, strict: false }],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestError);
+
+    await expect(
+      client.responses.create({
+        model: "nope",
+        input: "hello",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+
+    await expect(
+      client.responses.create({
+        model: "composer-2",
+        input: "hello",
+        previous_response_id: "resp_ffffffffffffffffffffffffffffffff",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestError);
+
+    const unstored = await client.responses.create({
+      model: "composer-2",
+      input: "hello",
+      store: false,
+    });
+    await expect(
+      client.responses.create({
+        model: "composer-2",
+        input: "next",
+        previous_response_id: unstored.id,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestError);
+
+    await expect(client.responses.retrieve("resp_ffffffffffffffffffffffffffffffff")).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+  });
+
+  it("retrieves and chains after a listener restart on the same SQLite file", async () => {
+    const dbPath = tempResponsesDbPath();
+    const first = await start(fakeProvider({ events: thinkingThenHi() }), {
+      CURSOR_RPC_OPENAI_RESPONSES_DB: dbPath,
+    });
+    const created = await sdk(first.url).responses.create({
+      model: "composer-2",
+      input: "hello",
+    });
+    expect(created.id).toMatch(/^resp_/);
+    await first.close();
+
+    const second = await start(fakeProvider({ events: thinkingThenHi() }), {
+      CURSOR_RPC_OPENAI_RESPONSES_DB: dbPath,
+    });
+    const retrieved = await sdk(second.url).responses.retrieve(created.id);
+    expect(retrieved.id).toBe(created.id);
+    expect(retrieved.status).toBe("completed");
+    expect(assistantText(retrieved)).toBe("hi");
+
+    const chained = await sdk(second.url).responses.create({
+      model: "composer-2",
+      input: "next",
+      previous_response_id: created.id,
+    });
+    expect(chained.status).toBe("completed");
+    expect(chained.previous_response_id).toBe(created.id);
+  });
+
+  it("includes event: response.completed and no data: [DONE] on a raw Responses stream", async () => {
+    const { url } = await start();
+    const response = await fetch(`${url}/v1/responses`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${INBOUND_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        input: "hello",
+        stream: true,
+      }),
+    });
+    expect(response.headers.get("content-type")).toMatch(/text\/event-stream/);
+    const text = await response.text();
+    expect(text).toContain("event: response.completed");
+    expect(text).not.toContain("data: [DONE]");
+  });
+});
+
 describe("bin and README", () => {
   it("documents the default loopback baseURL and that this is not @cursor/sdk", () => {
     const readme = readFileSync(fileURLToPath(new URL("../README.md", import.meta.url)), "utf8");
@@ -140,6 +284,17 @@ describe("bin and README", () => {
     expect(readme).toContain("CURSOR_RPC_OPENAI_API_KEY");
     expect(readme).toMatch(/tool/i);
     expect(readme).toMatch(/127\.0\.0\.1 or ::1|loopback/i);
+    expect(readme).toContain("chat.completions.create");
+    expect(readme).toContain("responses.create");
+    expect(readme).toContain("responses.retrieve");
+    expect(readme).toContain("CURSOR_RPC_OPENAI_RESPONSES_DB");
+    expect(readme).toContain("0600");
+    expect(readme).toContain("plaintext prompt log for this process's Cursor account");
+    expect(readme).toContain("store: false");
+    expect(readme).toContain("inspect-by-known-id");
+    expect(readme).toContain("no delete in this work");
+    expect(readme).toContain("Responses SSE is not Chat Completions chunks");
+    expect(readme).toContain("auth-off means any loopback client can retrieve by id");
   });
 
   it("does not listen when Cursor env credentials are missing", async () => {
@@ -154,6 +309,21 @@ describe("bin and README", () => {
     expect(listen).not.toHaveBeenCalled();
   });
 });
+
+function assistantText(response: { output: Array<{ type: string; content?: Array<{ type: string; text?: string }> }> }): string {
+  const texts: string[] = [];
+  for (const item of response.output) {
+    if (item.type !== "message") {
+      continue;
+    }
+    for (const part of item.content ?? []) {
+      if (part.type === "output_text" && part.text !== undefined) {
+        texts.push(part.text);
+      }
+    }
+  }
+  return texts.join("");
+}
 
 function hangingHandle(onAbort: () => void): RunHandle {
   let settle: (() => void) | undefined;

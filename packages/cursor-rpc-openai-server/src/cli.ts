@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { assertListenReady, loadConfig } from "./config.js";
+import { assertListenReady, loadConfig, resolveResponsesDbPath } from "./config.js";
 import { providerFromEnv } from "./provider.js";
 import { startServer } from "./server.js";
 
@@ -12,7 +12,15 @@ export async function main(
   const config = loadConfig({ argv, env });
   assertListenReady(config);
   const provider = providerFromEnv(env);
-  await startServer({ argv, env, config, provider });
+  await startServer({
+    argv,
+    env: {
+      ...env,
+      CURSOR_RPC_OPENAI_RESPONSES_DB: resolveResponsesDbPath({ env }),
+    },
+    config,
+    provider,
+  });
 }
 
 function resolvedArgvEntry(entry: string): string {
