@@ -41,19 +41,38 @@ export async function handleChatCompletion(options: {
     mode: "ask",
   };
   if (!request.stream) {
-    const handle = await options.provider.run(runOptions);
-    const id = `chatcmpl-${randomUUID()}`;
-    const created = Math.floor(Date.now() / 1000);
-    const result = await handle.wait();
-    const completion = chatCompletionObject({
-      id,
-      created,
-      model,
-      text: result.text,
-      usage: result.usage,
-    });
-    persistStoredCompletion(options.store, request, completion);
-    writeJson(options.res, 200, completion, options.requestId);
+    const abort = new AbortController();
+    let handle: RunHandle | undefined;
+    const onClose = () => {
+      if (!options.res.writableFinished) {
+        abort.abort();
+        handle?.abort();
+      }
+    };
+    options.res.once("close", onClose);
+    if (options.res.destroyed) {
+      onClose();
+    }
+    try {
+      handle = await options.provider.run({ ...runOptions, signal: abort.signal });
+      const id = `chatcmpl-${randomUUID()}`;
+      const created = Math.floor(Date.now() / 1000);
+      const result = await handle.wait();
+      if (abort.signal.aborted || options.res.writableEnded) {
+        return;
+      }
+      const completion = chatCompletionObject({
+        id,
+        created,
+        model,
+        text: result.text,
+        usage: result.usage,
+      });
+      persistStoredCompletion(options.store, request, completion);
+      writeJson(options.res, 200, completion, options.requestId);
+    } finally {
+      options.res.off("close", onClose);
+    }
     return;
   }
 
@@ -111,12 +130,12 @@ export async function handleChatCompletion(options: {
     if (request.includeUsage) {
       writeSseData(options.res, completionChunk(id, created, model, [], toUsage(usage)));
     }
-    writeSseDone(options.res);
     persistStoredCompletion(
       options.store,
       request,
       chatCompletionObject({ id, created, model, text, usage }),
     );
+    writeSseDone(options.res);
     options.res.end();
   } catch (error) {
     await settleStreamError(error, options.res, options.requestId, options.pin);

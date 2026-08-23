@@ -353,6 +353,31 @@ describe("responses create JSON", () => {
     expect(calls).toBe(1);
   });
 
+  it("does not persist a failed row for a JSON create 502", async () => {
+    const dbPath = tempResponsesDbPath();
+    const { url, close } = await start(
+      fakeProvider({
+        run: async () => {
+          throw new AuthenticationError("invalid Bearer sk-leaked", { code: "unauthenticated" });
+        },
+      }),
+      { CURSOR_RPC_OPENAI_RESPONSES_DB: dbPath },
+    );
+    const first = await createResponse(url, { input: "hi", store: true });
+    expect(first.status).toBe(502);
+    await close();
+    const inspect = openResponseStore(dbPath);
+    expect(inspect.get("resp_missing")).toBeUndefined();
+    const listed = inspect.listChat();
+    expect(listed.data).toEqual([]);
+    inspect.close();
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(dbPath);
+    const row = db.prepare("SELECT COUNT(*) AS n FROM responses").get() as { n: number };
+    expect(row.n).toBe(0);
+    db.close();
+  });
+
   it("does not let extra body keys widen the ASK pin", async () => {
     let captured: ClientRunOptions | undefined;
     const { url } = await start(

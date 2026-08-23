@@ -203,42 +203,53 @@ export async function handleCreateResponse(options: {
     });
     return;
   }
-  let text: string;
-  let usage: UsageCounts;
+  const abort = new AbortController();
+  let handle: RunHandle | undefined;
+  const onClose = () => {
+    if (!options.res.writableFinished) {
+      abort.abort();
+      handle?.abort();
+    }
+  };
+  options.res.once("close", onClose);
+  if (options.res.destroyed) {
+    onClose();
+  }
   try {
-    const handle = await options.provider.run(prepared.runOptions);
+    handle = await options.provider.run({ ...prepared.runOptions, signal: abort.signal });
     const result = await handle.wait();
-    text = result.text;
-    usage = result.usage;
+    if (abort.signal.aborted || options.res.writableEnded) {
+      return;
+    }
+    const response = completedResponse({
+      id: ids.responseId,
+      messageId: ids.messageId,
+      createdAt,
+      model: prepared.model,
+      text: result.text,
+      usage: result.usage,
+      instructions: prepared.instructions,
+      store: prepared.store,
+      previousResponseId: prepared.previousResponseId,
+    });
+    persistRow(options.store, {
+      id: ids.responseId,
+      status: "completed",
+      previousResponseId: prepared.previousResponseId,
+      model: prepared.model,
+      instructions: prepared.instructions,
+      store: prepared.store,
+      createdAt,
+      response,
+      transcript: { user: prepared.userText, assistant: result.text },
+    });
+    writeJson(options.res, 200, response, options.requestId);
   } catch (error) {
     const mapped = mapCursorError(error);
-    const httpError = applyMappedError(mapped, options.pin);
-    persistFailed(options.store, prepared, ids.responseId, createdAt, httpError, mapped.kind);
-    throw httpError;
+    throw applyMappedError(mapped, options.pin);
+  } finally {
+    options.res.off("close", onClose);
   }
-  const response = completedResponse({
-    id: ids.responseId,
-    messageId: ids.messageId,
-    createdAt,
-    model: prepared.model,
-    text,
-    usage,
-    instructions: prepared.instructions,
-    store: prepared.store,
-    previousResponseId: prepared.previousResponseId,
-  });
-  persistRow(options.store, {
-    id: ids.responseId,
-    status: "completed",
-    previousResponseId: prepared.previousResponseId,
-    model: prepared.model,
-    instructions: prepared.instructions,
-    store: prepared.store,
-    createdAt,
-    response,
-    transcript: { user: prepared.userText, assistant: text },
-  });
-  writeJson(options.res, 200, response, options.requestId);
 }
 
 async function handleCreateResponseStream(options: {

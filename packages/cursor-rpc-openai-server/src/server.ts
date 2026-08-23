@@ -123,6 +123,7 @@ async function dispatch(
       }
       return;
     }
+    console.error(requestId, error);
     writeJson(res, 500, internalError, requestId);
   }
 }
