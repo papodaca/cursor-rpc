@@ -6,7 +6,36 @@ import type { ServerProvider } from "../provider.js";
 import { modelNotFoundError, resolveCreateModel } from "./models.js";
 import type { InsertResponseRow, ResponseStore } from "./response-store.js";
 import { mapResponsesInput, rejectUnsupportedInputItems } from "./responses-input.js";
-import { createResponsesSseWriter, writeResponsesSseHeaders, type ResponsesSseWriter } from "./responses-sse.js";
+import {
+  createResponsesSseWriter,
+  writeResponsesReplay,
+  writeResponsesSseHeaders,
+  type ResponsesSseWriter,
+} from "./responses-sse.js";
+
+const RESPONSES_PREFIX = "/v1/responses/";
+const CANCEL_SUFFIX = "/cancel";
+
+export const responseNotFoundError = openaiError({
+  message: "Response not found",
+  type: "invalid_request_error",
+  param: null,
+  code: null,
+});
+
+export const compactUnsupportedError = openaiError({
+  message: "Compaction and encrypted_content are unsupported",
+  type: "invalid_request_error",
+  param: "compact",
+  code: "invalid_request_error",
+});
+
+export const cancelNotBackgroundError = openaiError({
+  message: "Only responses created with background:true can be cancelled",
+  type: "invalid_request_error",
+  param: "response_id",
+  code: "invalid_request_error",
+});
 
 const ASK_MODE = "ask" as const;
 const ENTROPY_BYTES = 16;
@@ -67,6 +96,76 @@ export async function prepareResponseCreate(options: {
     runOptions,
     userText: mapped.userText,
   };
+}
+
+export function responseIdFromPath(path: string): string | undefined {
+  if (!path.startsWith(RESPONSES_PREFIX)) {
+    return undefined;
+  }
+  return decodeURIComponent(path.slice(RESPONSES_PREFIX.length));
+}
+
+export function cancelResponseIdFromPath(path: string): string | undefined {
+  if (!path.startsWith(RESPONSES_PREFIX) || !path.endsWith(CANCEL_SUFFIX)) {
+    return undefined;
+  }
+  return decodeURIComponent(path.slice(RESPONSES_PREFIX.length, path.length - CANCEL_SUFFIX.length));
+}
+
+export function handleGetResponse(options: {
+  res: ServerResponse;
+  requestId: string;
+  id: string;
+  url: string;
+  store: ResponseStore;
+}): void {
+  const stored = options.store.get(options.id);
+  if (stored === undefined) {
+    writeJson(options.res, 404, responseNotFoundError, options.requestId);
+    return;
+  }
+  const query = parseRetrieveQuery(options.url);
+  if (!query.stream) {
+    writeJson(options.res, 200, stored, options.requestId);
+    return;
+  }
+  writeResponsesReplay(options.res, options.requestId, replayEvents(stored), query.startingAfter);
+}
+
+export function handleDeleteResponse(options: {
+  res: ServerResponse;
+  requestId: string;
+  id: string;
+  store: ResponseStore;
+}): void {
+  if (!options.store.delete(options.id)) {
+    writeJson(options.res, 404, responseNotFoundError, options.requestId);
+    return;
+  }
+  writeJson(
+    options.res,
+    200,
+    { id: options.id, object: "response", deleted: true },
+    options.requestId,
+  );
+}
+
+export function handleCancelResponse(options: {
+  res: ServerResponse;
+  requestId: string;
+  id: string;
+  store: ResponseStore;
+}): void {
+  const stored = options.store.get(options.id);
+  if (stored === undefined) {
+    writeJson(options.res, 404, responseNotFoundError, options.requestId);
+    return;
+  }
+  writeJson(options.res, 400, cancelNotBackgroundError, options.requestId);
+}
+
+export function handleCompactResponse(options: { res: ServerResponse; requestId: string }): void {
+  writeJson(options.res, 400, compactUnsupportedError, options.requestId);
 }
 
 export async function handleCreateResponse(options: {
@@ -321,6 +420,117 @@ function emitStreamFailure(
     code: httpError.body.error.code,
     message: httpError.body.error.message,
     param: httpError.body.error.param,
+  });
+}
+
+function parseRetrieveQuery(url: string): { stream: boolean; startingAfter?: number } {
+  const parsed = new URL(url, "http://localhost");
+  const startingAfterRaw = parsed.searchParams.get("starting_after");
+  let startingAfter: number | undefined;
+  if (startingAfterRaw !== null && /^-?\d+$/.test(startingAfterRaw)) {
+    startingAfter = Number(startingAfterRaw);
+  }
+  return {
+    stream: parsed.searchParams.get("stream") === "true",
+    startingAfter,
+  };
+}
+
+function replayEvents(stored: Record<string, unknown>): Array<{ type: string } & Record<string, unknown>> {
+  if (stored.status === "failed") {
+    const error = isRecord(stored.error) ? stored.error : {};
+    return [
+      { type: "response.failed", response: stored },
+      {
+        type: "error",
+        code: typeof error.code === "string" ? error.code : null,
+        message: typeof error.message === "string" ? error.message : "",
+        param: typeof error.param === "string" ? error.param : null,
+      },
+    ];
+  }
+  const text = storedAssistantText(stored);
+  const messageId = storedMessageId(stored);
+  const inProgress = inProgressFromStored(stored);
+  return [
+    { type: "response.created", response: inProgress },
+    { type: "response.in_progress", response: inProgress },
+    { type: "response.output_item.added", output_index: 0, item: assistantMessage(messageId, "in_progress") },
+    {
+      type: "response.content_part.added",
+      item_id: messageId,
+      output_index: 0,
+      content_index: 0,
+      part: outputTextPart(""),
+    },
+    {
+      type: "response.output_text.delta",
+      item_id: messageId,
+      output_index: 0,
+      content_index: 0,
+      delta: text,
+      logprobs: [],
+    },
+    {
+      type: "response.output_text.done",
+      item_id: messageId,
+      output_index: 0,
+      content_index: 0,
+      text,
+      logprobs: [],
+    },
+    {
+      type: "response.content_part.done",
+      item_id: messageId,
+      output_index: 0,
+      content_index: 0,
+      part: outputTextPart(text),
+    },
+    { type: "response.output_item.done", output_index: 0, item: assistantMessage(messageId, "completed", text) },
+    { type: "response.completed", response: stored },
+  ];
+}
+
+function storedAssistantText(stored: Record<string, unknown>): string {
+  const output = stored.output;
+  if (!Array.isArray(output)) {
+    return "";
+  }
+  const texts: string[] = [];
+  for (const item of output) {
+    if (!isRecord(item)) {
+      continue;
+    }
+    const content = item.content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const part of content) {
+      if (isRecord(part) && part.type === "output_text" && typeof part.text === "string") {
+        texts.push(part.text);
+      }
+    }
+  }
+  return texts.join("");
+}
+
+function storedMessageId(stored: Record<string, unknown>): string {
+  const output = stored.output;
+  if (Array.isArray(output) && isRecord(output[0]) && typeof output[0].id === "string") {
+    return output[0].id;
+  }
+  const id = typeof stored.id === "string" ? stored.id : "replay";
+  return id.startsWith("resp_") ? `msg_${id.slice("resp_".length)}` : `msg_${id}`;
+}
+
+function inProgressFromStored(stored: Record<string, unknown>): Record<string, unknown> {
+  return inProgressResponse({
+    id: typeof stored.id === "string" ? stored.id : "",
+    createdAt: typeof stored.created_at === "number" ? stored.created_at : 0,
+    model: typeof stored.model === "string" ? stored.model : "",
+    instructions: typeof stored.instructions === "string" ? stored.instructions : null,
+    store: stored.store !== false,
+    previousResponseId: typeof stored.previous_response_id === "string" ? stored.previous_response_id : null,
   });
 }
 

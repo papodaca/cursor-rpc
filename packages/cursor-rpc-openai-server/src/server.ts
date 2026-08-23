@@ -16,14 +16,21 @@ import {
   invalidContentTypeError,
   invalidJsonError,
   notFoundError,
-  openaiError,
   payloadTooLargeError,
   writeJson,
 } from "./errors.js";
 import { handleChatCompletion, runPinned, type UpstreamPin } from "./openai/completions.js";
 import { listModelsResponse, modelNotFoundError, toOpenAIModel } from "./openai/models.js";
 import { openResponseStore, type ResponseStore } from "./openai/response-store.js";
-import { handleCreateResponse } from "./openai/responses.js";
+import {
+  cancelResponseIdFromPath,
+  handleCancelResponse,
+  handleCompactResponse,
+  handleCreateResponse,
+  handleDeleteResponse,
+  handleGetResponse,
+  responseIdFromPath,
+} from "./openai/responses.js";
 import {
   chatCompletionIdFromPath,
   handleDeleteStoredCompletion,
@@ -45,13 +52,6 @@ export type StartServerOptions = ConfigSource & {
   config?: ServerConfig;
   provider?: ServerProvider;
 };
-
-const responseNotFoundError = openaiError({
-  message: "Response not found",
-  type: "invalid_request_error",
-  param: null,
-  code: null,
-});
 
 export async function startServer(options: StartServerOptions = {}): Promise<StartedServer> {
   const config = options.config ?? loadConfig(options);
@@ -135,13 +135,33 @@ async function route(
 ): Promise<void> {
   const path = pathname(req);
   if (req.method === "GET" && path.startsWith("/v1/responses/")) {
-    const id = decodeURIComponent(path.slice("/v1/responses/".length));
-    const stored = store.get(id);
-    if (stored === undefined) {
-      writeJson(res, 404, responseNotFoundError, requestId);
+    const id = responseIdFromPath(path);
+    if (id !== undefined && id.length > 0) {
+      handleGetResponse({
+        res,
+        requestId,
+        id,
+        url: req.url ?? "/",
+        store,
+      });
       return;
     }
-    writeJson(res, 200, stored, requestId);
+  }
+  if (req.method === "DELETE" && path.startsWith("/v1/responses/")) {
+    const id = responseIdFromPath(path);
+    if (id !== undefined && id.length > 0) {
+      handleDeleteResponse({ res, requestId, id, store });
+      return;
+    }
+  }
+  if (req.method === "POST" && path === "/v1/responses/compact") {
+    await readJson(req);
+    handleCompactResponse({ res, requestId });
+    return;
+  }
+  const cancelId = cancelResponseIdFromPath(path);
+  if (req.method === "POST" && cancelId !== undefined && cancelId.length > 0) {
+    handleCancelResponse({ res, requestId, id: cancelId, store });
     return;
   }
   if (req.method === "GET" && path === "/v1/chat/completions") {

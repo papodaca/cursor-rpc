@@ -80,6 +80,7 @@ export type ResponseStore = {
   readonly path: string;
   insert(row: InsertResponseRow): void;
   get(id: string): Record<string, unknown> | undefined;
+  delete(id: string): boolean;
   loadAncestorChain(previousResponseId: string): ResponseTranscript[];
   insertChat(row: InsertChatCompletionRow): void;
   getChat(id: string): Record<string, unknown> | undefined;
@@ -142,6 +143,7 @@ export function openResponseStore(dbPath: string): ResponseStore {
     id, status, previous_response_id, model, instructions, store, created_at, response_json, transcript_json
   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const getProjectionStmt = db.prepare("SELECT response_json FROM responses WHERE id = ?");
+  const deleteStmt = db.prepare("DELETE FROM responses WHERE id = ?");
   const getChainStmt = db.prepare(
     "SELECT status, previous_response_id, transcript_json FROM responses WHERE id = ?",
   );
@@ -178,6 +180,9 @@ export function openResponseStore(dbPath: string): ResponseStore {
         return undefined;
       }
       return JSON.parse(row.response_json) as Record<string, unknown>;
+    },
+    delete(id: string): boolean {
+      return deleteStmt.run(id).changes > 0;
     },
     loadAncestorChain(previousResponseId: string): ResponseTranscript[] {
       const visited = new Set<string>();

@@ -36,3 +36,24 @@ export function createResponsesSseWriter(): ResponsesSseWriter {
     },
   };
 }
+
+export function writeResponsesReplay(
+  res: ServerResponse,
+  requestId: string,
+  events: Array<{ type: string } & Record<string, unknown>>,
+  startingAfter?: number,
+): void {
+  writeResponsesSseHeaders(res, requestId);
+  let sequenceNumber = 0;
+  for (const event of events) {
+    const numbered = { ...event, sequence_number: sequenceNumber };
+    sequenceNumber += 1;
+    if (startingAfter !== undefined && numbered.sequence_number <= startingAfter) {
+      continue;
+    }
+    writeResponsesSseEvent(res, numbered);
+  }
+  if (!res.writableEnded) {
+    res.end();
+  }
+}
