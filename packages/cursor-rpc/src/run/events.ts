@@ -22,6 +22,7 @@ export type RunEvent =
       name: string;
       argumentsJson: string;
       toolCallId?: string;
+      providerIdentifier?: string;
     }
   | { type: "prompt_suggestion"; suggestion: string }
   | { type: "routed_model"; displayName: string }

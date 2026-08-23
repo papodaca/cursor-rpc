@@ -317,7 +317,7 @@ function resolveRequestedModelId(
   modelId: string | undefined,
   aliasMap: Map<string, string>,
 ): string | undefined {
-  if (!nonEmpty(modelId)) {
+  if (modelId === undefined || modelId.trim() === "") {
     return undefined;
   }
   return aliasMap.get(modelId.toLowerCase()) ?? modelId;

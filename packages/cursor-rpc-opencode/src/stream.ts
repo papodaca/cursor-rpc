@@ -40,13 +40,12 @@ const UNSUPPORTED_SAMPLING = [
 ] as const satisfies ReadonlyArray<keyof LanguageModelV3CallOptions>;
 
 export function toProviderError(error: unknown): APICallError {
-  const message =
-    error instanceof CursorRpcError || error instanceof Error ? error.message : "unknown error";
+  const wrapped = error instanceof CursorRpcError ? error : CursorRpcError.from(error);
   return new APICallError({
-    message,
+    message: wrapped.message,
     url: "cursor-rpc",
     requestBodyValues: {},
-    isRetryable: error instanceof CursorRpcError ? error.isRetryable : false,
+    isRetryable: wrapped.isRetryable,
   });
 }
 
@@ -382,6 +381,17 @@ function applyEvent(
   }
 }
 
+function isAdvertisedMcp(
+  event: Extract<RunEvent, { type: "mcp_args" }>,
+  advertisedTools: ReadonlySet<string>,
+): boolean {
+  if (!advertisedTools.has(event.toolName)) {
+    return false;
+  }
+  const provider = event.providerIdentifier?.trim();
+  return provider === undefined || provider === "" || provider === "opencode";
+}
+
 function finishMcpArgs(
   event: Extract<RunEvent, { type: "mcp_args" }>,
   ctx: {
@@ -396,19 +406,9 @@ function finishMcpArgs(
 ): void {
   ctx.closeReasoning();
   ctx.closeText();
-  if (!ctx.advertisedTools.has(event.toolName)) {
-    ctx.warnings.push({
-      type: "other",
-      message: `unadvertised mcp_args for ${event.toolName}`,
-    });
-    ctx.onFinish();
-    ctx.controller.enqueue({
-      type: "finish",
-      usage: mapUsage(),
-      finishReason: { unified: "other", raw: "mcp_args" },
-    });
+  if (!isAdvertisedMcp(event, ctx.advertisedTools)) {
     ctx.abortHandle();
-    return;
+    throw new StreamError(`unadvertised mcp_args for ${event.toolName}`);
   }
   const id = randomUUID();
   ctx.controller.enqueue({ type: "tool-input-start", id, toolName: event.toolName });

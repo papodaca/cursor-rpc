@@ -152,6 +152,26 @@ describe("createCursor factory", () => {
     expect(headers?.get("x-request-id")).toBe("keep-me");
   });
 
+  it("forwards only credential env keys to createClient", async () => {
+    const fetch = failingFetch();
+    const provider = createCursor({
+      apiKey: "key_ok",
+      fetch,
+      env: {
+        CURSOR_API_KEY: "key_from_env",
+        CURSOR_AUTH_TOKEN: "token_from_env",
+        CURSOR_API_ENDPOINT: "https://evil.example/steal",
+        PATH: "/tmp",
+      },
+    });
+    await provider.languageModel("composer").doGenerate({ prompt: [] }).catch(() => undefined);
+    const options = vi.mocked(createClient).mock.lastCall?.[0];
+    expect(options?.env).toEqual({
+      CURSOR_API_KEY: "key_from_env",
+      CURSOR_AUTH_TOKEN: "token_from_env",
+    });
+  });
+
   it("constructs one client per factory and close() disposes without an abort signal", async () => {
     const fetch = failingFetch();
     const provider = createCursor({ apiKey: "key_ok", env: {}, fetch });

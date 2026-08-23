@@ -554,8 +554,41 @@ describe("OpenCode tools through Cursor MCP", () => {
       return;
     }
     expect(aborted).toBe(true);
+    expect(outcome.collected.error).toBeDefined();
     expect(toolCalls(outcome.collected.parts)).toHaveLength(0);
     expect(outcome.collected.parts.some((part) => part.type === "tool-input-start")).toBe(false);
+    expect(finishes(outcome.collected.parts)).toHaveLength(0);
+  });
+
+  it("rejects mcp_args from a foreign provider_identifier even when the name is advertised", async () => {
+    let aborted = false;
+    const model = modelWithRun(async () =>
+      completedHandle(
+        [
+          {
+            type: "mcp_args",
+            toolName: "write",
+            argsJson: WRITE_ARGS_JSON,
+            id: 99,
+            execId: "exec-write",
+            providerIdentifier: "cursor",
+          },
+        ],
+        {
+          abort: () => {
+            aborted = true;
+          },
+        },
+      ),
+    );
+
+    const { stream } = await model.doStream({ prompt: [user("hi")], tools: [WRITE_TOOL] });
+    const collected = await collectParts(stream);
+
+    expect(aborted).toBe(true);
+    expect(collected.error).toBeDefined();
+    expect(toolCalls(collected.parts)).toHaveLength(0);
+    expect(finishes(collected.parts)).toHaveLength(0);
   });
 
   it("AGENT probe via streamCursorRun mode does not apply a shell result and shipped doStream stays ASK", async () => {

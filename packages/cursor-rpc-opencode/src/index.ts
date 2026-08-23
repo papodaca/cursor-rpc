@@ -28,8 +28,8 @@ export function createCursor(settings: CursorProviderSettings = {}): CursorProvi
     if (client !== undefined && lastInputs !== undefined && sameSettingsInputs(lastInputs, settings)) {
       return client;
     }
-    client?.close();
     const created = createClient(resolvedClientOptions(settings));
+    client?.close();
     client = created;
     lastInputs = {
       apiKey: settings.apiKey,
