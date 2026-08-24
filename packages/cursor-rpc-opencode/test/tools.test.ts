@@ -1,4 +1,5 @@
-import { create } from "@bufbuild/protobuf";
+import { create, fromJson } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import type { LanguageModelV3CallOptions, LanguageModelV3StreamPart } from "@ai-sdk/provider";
 import {
   createClient,
@@ -205,10 +206,6 @@ function mcpAuthQuery(): AgentServerMessage {
 }
 
 function mcpArgsMessage(toolName: string, args: Record<string, string>, id = 11): AgentServerMessage {
-  const encoded: { [key: string]: Uint8Array } = {};
-  for (const [key, value] of Object.entries(args)) {
-    encoded[key] = new TextEncoder().encode(JSON.stringify(value));
-  }
   return create(AgentServerMessageSchema, {
     message: {
       case: "execServerMessage",
@@ -220,7 +217,9 @@ function mcpArgsMessage(toolName: string, args: Record<string, string>, id = 11)
           value: create(McpArgsSchema, {
             name: toolName,
             toolName,
-            args: encoded,
+            args: Object.fromEntries(
+              Object.entries(args).map(([key, value]) => [key, fromJson(ValueSchema, value)]),
+            ),
           }),
         },
       }),
@@ -273,7 +272,7 @@ describe("OpenCode tools through Cursor MCP", () => {
       ],
     });
 
-    expect(captured?.mode).toBeUndefined();
+    expect(captured?.mode).toBe("ask");
     expect(captured?.handlers).toBeUndefined();
     expect(captured?.handlers?.onExec).toBeUndefined();
     const tools = captured?.mcpTools ?? [];
@@ -652,7 +651,7 @@ describe("OpenCode tools through Cursor MCP", () => {
       return completedHandle([{ type: "turn_ended", usage: {} }]);
     });
     await shippedModel.doStream({ prompt: [user("hi")], tools: [WRITE_TOOL] });
-    expect(shipped?.mode).toBeUndefined();
+    expect(shipped?.mode).toBe("ask");
     client.close();
   });
 

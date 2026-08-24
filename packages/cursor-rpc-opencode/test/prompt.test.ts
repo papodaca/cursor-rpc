@@ -28,6 +28,10 @@ function historyText(message: ConversationHistory["messages"][number] | undefine
   return "";
 }
 
+function toolMessage(message: ConversationHistory["messages"][number] | undefined) {
+  return message?.message.case === "tool" ? message.message.value : undefined;
+}
+
 function completedHandle(): RunHandle {
   const events: RunEvent[] = [
     { type: "text_delta", text: "ok" },
@@ -139,5 +143,41 @@ describe("prompt mapping", () => {
     expect(captured.conversationHistory?.messages.some((message) => message.message.case === "tool")).toBe(true);
     const historyJson = JSON.stringify(captured.conversationHistory);
     expect(historyJson).not.toMatch(/image\/png|x\.png/);
+  });
+
+  it("does not replay the original user query after a tool result", async () => {
+    const captured = await captureRun([
+      system("Use tools when needed."),
+      user("latest rust news"),
+      {
+        role: "assistant",
+        content: [{ type: "tool-call", toolCallId: "c1", toolName: "exa_web_search_exa", input: { query: "latest rust news" } }],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "c1",
+            toolName: "exa_web_search_exa",
+            output: { type: "text", value: "Rust 1.80 released" },
+          },
+        ],
+      },
+    ]);
+
+    expect(captured.prompt).toContain("User:\nlatest rust news");
+    expect(captured.prompt).toContain("Called exa_web_search_exa");
+    expect(captured.prompt).toContain("Rust 1.80 released");
+    expect(captured.prompt).toContain("Continue from the conversation above");
+    expect(captured.prompt).not.toBe("Use tools when needed.\n\nlatest rust news");
+    const messages = captured.conversationHistory?.messages ?? [];
+    expect(messages).toHaveLength(3);
+    expect(historyRole(messages[0]!)).toBe("user");
+    expect(historyText(messages[0])).toBe("latest rust news");
+    expect(historyRole(messages[1]!)).toBe("assistant");
+    expect(historyRole(messages[2]!)).toBe("tool");
+    expect(toolMessage(messages[2])?.toolCallId).toBe("c1");
+    expect(toolMessage(messages[2])?.toolName).toBe("exa_web_search_exa");
   });
 });

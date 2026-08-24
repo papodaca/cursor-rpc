@@ -4,7 +4,7 @@ import type {
   LanguageModelV3ToolResultOutput,
   SharedV3Warning,
 } from "@ai-sdk/provider";
-import type { ConversationHistory } from "cursor-rpc";
+import { conversationHistoryFromTurns, type ConversationHistory, type HistoryTurn } from "cursor-rpc";
 
 export type MappedPrompt = {
   prompt: string;
@@ -47,17 +47,23 @@ export function mapPrompt(messages: LanguageModelV3Prompt): MappedPrompt {
     }
   }
 
-  const lastUserIndex = items.findLastIndex((item) => item.kind === "user");
-  const last = lastUserIndex >= 0 ? items[lastUserIndex] : undefined;
-  const userPrompt = last?.kind === "user" ? last.text : "";
+  const lastItem = items.at(-1);
+  const lastIsUser = lastItem?.kind === "user";
+  const userPrompt = lastIsUser ? lastItem.text : "";
   const systemBlock = systems.join("\n\n");
-  const prompt = systemBlock.length === 0 ? userPrompt : userPrompt.length === 0 ? systemBlock : `${systemBlock}\n\n${userPrompt}`;
-  const historyItems = items.filter((item, index) => index !== lastUserIndex && !isEmptyHistoryItem(item));
+  const historyItems = (lastIsUser ? items.slice(0, -1) : items).filter((item) => !isEmptyHistoryItem(item));
+  const prompt = lastIsUser
+    ? systemBlock.length === 0
+      ? userPrompt
+      : userPrompt.length === 0
+        ? systemBlock
+        : `${systemBlock}\n\n${userPrompt}`
+    : continuationPrompt(systemBlock, historyItems);
 
   return {
     prompt,
     warnings,
-    ...(historyItems.length === 0 ? {} : { conversationHistory: buildHistory(historyItems) }),
+    ...(historyItems.length === 0 ? {} : { conversationHistory: conversationHistoryFromTurns(toHistoryTurns(historyItems)) }),
   };
 }
 
@@ -143,10 +149,6 @@ function asText(value: unknown): string {
   return typeof value === "string" ? value : String(value ?? "");
 }
 
-function textContent(text: string) {
-  return { content: { case: "text" as const, value: { text } } };
-}
-
 function toolOutputText(output: LanguageModelV3ToolResultOutput): { text: string; isError?: boolean } {
   switch (output.type) {
     case "text":
@@ -180,55 +182,56 @@ function isEmptyHistoryItem(item: HistoryItem): boolean {
   return item.kind === "user" && item.text.length === 0;
 }
 
-function buildHistory(items: HistoryItem[]): ConversationHistory {
-  return {
-    messages: items.map((item) => {
-      if (item.kind === "user") {
-        return {
-          message: {
-            case: "user" as const,
-            value: {
-              content: [textContent(item.text)],
-            },
-          },
-        };
-      }
-      if (item.kind === "tool") {
-        return {
-          message: {
-            case: "tool" as const,
-            value: {
-              toolCallId: item.toolCallId,
-              toolName: item.toolName,
-              content: [textContent(item.text)],
-              ...(item.isError === true ? { isError: true } : {}),
-            },
-          },
-        };
-      }
+const CONTINUATION = "Continue from the conversation above. Do not repeat completed tool calls.";
+
+function continuationPrompt(systemBlock: string, historyItems: HistoryItem[]): string {
+  const transcript = historyItems.map(formatHistoryItem).join("\n\n");
+  return [systemBlock, transcript, CONTINUATION].filter((part) => part.length > 0).join("\n\n");
+}
+
+function formatHistoryItem(item: HistoryItem): string {
+  if (item.kind === "user") {
+    return `User:\n${item.text}`;
+  }
+  if (item.kind === "tool") {
+    return `Tool ${item.toolName} result:\n${item.text}`;
+  }
+  const lines: string[] = [];
+  for (const part of item.parts) {
+    if (part.type === "text") {
+      lines.push(part.text);
+    } else {
+      lines.push(`Called ${part.toolName} with ${part.argsJson}`);
+    }
+  }
+  return `Assistant:\n${lines.join("\n")}`;
+}
+
+function toHistoryTurns(items: HistoryItem[]): HistoryTurn[] {
+  return items.map((item) => {
+    if (item.kind === "user") {
+      return { role: "user", text: item.text };
+    }
+    if (item.kind === "tool") {
       return {
-        message: {
-          case: "assistant" as const,
-          value: {
-            content: item.parts.map((part) =>
-              part.type === "text"
-                ? textContent(part.text)
-                : {
-                    content: {
-                      case: "toolCall" as const,
-                      value: {
-                        toolCallId: part.toolCallId,
-                        toolName: part.toolName,
-                        argsJson: part.argsJson,
-                      },
-                    },
-                  },
-            ),
-          },
-        },
+        role: "tool",
+        toolCallId: item.toolCallId,
+        name: item.toolName,
+        text: item.text,
+        ...(item.isError === true ? { isError: true } : {}),
       };
-    }),
-  } as ConversationHistory;
+    }
+    return {
+      role: "assistant",
+      text: item.parts
+        .filter((part): part is Extract<AssistantPart, { type: "text" }> => part.type === "text")
+        .map((part) => part.text)
+        .join(""),
+      toolCalls: item.parts
+        .filter((part): part is Extract<AssistantPart, { type: "tool_call" }> => part.type === "tool_call")
+        .map((part) => ({ id: part.toolCallId, name: part.toolName, argumentsJson: part.argsJson })),
+    };
+  });
 }
 
 function skipped(feature: string, details: string): SharedV3Warning {

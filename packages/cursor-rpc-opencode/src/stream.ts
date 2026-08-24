@@ -171,6 +171,8 @@ function clientRunOptions(
   }
   if (mode === "agent") {
     options.mode = "agent";
+  } else if (mcpTools !== undefined) {
+    options.mode = "ask";
   }
   return options;
 }
