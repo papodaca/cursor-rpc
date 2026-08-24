@@ -1,4 +1,5 @@
-import { create } from "@bufbuild/protobuf";
+import { create, fromJson } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { describe, expect, it } from "vitest";
 import {
   AgentServerMessageSchema,
@@ -71,11 +72,11 @@ function textDelta(text: string): AgentServerMessage {
   });
 }
 
+function mcpArgValues(args: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(args).map(([key, value]) => [key, fromJson(ValueSchema, value)]));
+}
+
 function mcpExec(id: number, execId: string, toolName: string, args: Record<string, string>): AgentServerMessage {
-  const encoded: { [key: string]: Uint8Array } = {};
-  for (const [key, value] of Object.entries(args)) {
-    encoded[key] = new TextEncoder().encode(JSON.stringify(value));
-  }
   return create(AgentServerMessageSchema, {
     message: {
       case: "execServerMessage",
@@ -88,7 +89,7 @@ function mcpExec(id: number, execId: string, toolName: string, args: Record<stri
             name: toolName,
             toolName,
             toolCallId: `call-${id}`,
-            args: encoded,
+            args: mcpArgValues(args),
           }),
         },
       }),

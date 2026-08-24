@@ -1,5 +1,5 @@
-import { create, fromBinary, toJson } from "@bufbuild/protobuf";
-import { ValueSchema } from "@bufbuild/protobuf/wkt";
+import { create, toJson } from "@bufbuild/protobuf";
+import { ValueSchema, type Value } from "@bufbuild/protobuf/wkt";
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { AuthenticationError, CancelledError, StreamError } from "../errors.js";
@@ -392,25 +392,12 @@ function toCount(value: bigint | number | undefined): number | undefined {
   return Number(value);
 }
 
-function mcpArgumentsJson(args: { [key: string]: Uint8Array }): string {
+function mcpArgumentsJson(args: { [key: string]: Value }): string {
   const decoded: Record<string, unknown> = {};
-  for (const [key, bytes] of Object.entries(args)) {
-    decoded[key] = decodeMcpArg(bytes);
+  for (const [key, value] of Object.entries(args)) {
+    decoded[key] = toJson(ValueSchema, value);
   }
   return JSON.stringify(decoded);
-}
-
-function decodeMcpArg(bytes: Uint8Array): unknown {
-  try {
-    return toJson(ValueSchema, fromBinary(ValueSchema, bytes));
-  } catch {
-    const text = new TextDecoder().decode(bytes);
-    try {
-      return JSON.parse(text) as unknown;
-    } catch {
-      return text;
-    }
-  }
 }
 
 function toPublicEvent(inbound: AgentServerMessage): RunEvent | undefined {

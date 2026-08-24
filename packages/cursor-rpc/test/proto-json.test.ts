@@ -1,4 +1,5 @@
 import { fromJson, toJson } from "@bufbuild/protobuf";
+import { ValueSchema } from "@bufbuild/protobuf/wkt";
 import { describe, expect, it } from "vitest";
 import { AgentClientMessageSchema, AgentServerMessageSchema, AgentService } from "../src/generated/agent/v1/agent_pb.ts";
 import {
@@ -154,6 +155,33 @@ describe("proto JSON fixtures", () => {
     );
     expect(message.result.case).toBe("success");
     expect(toJson(RunWebFetchResponseSchema, message)).not.toHaveProperty("unexpectedFutureField");
+  });
+
+  it("decodes live McpArgs JSON numbers without requiring Uint8Array bytes", () => {
+    const message = fromJson(AgentServerMessageSchema, {
+      execServerMessage: {
+        id: 11,
+        execId: "exec-search",
+        mcpArgs: {
+          name: "search",
+          toolName: "search",
+          args: {
+            numResults: 10,
+            query: "cursor rpc",
+          },
+        },
+      },
+    });
+    expect(message.message.case).toBe("execServerMessage");
+    if (message.message.case !== "execServerMessage") {
+      throw new Error("expected execServerMessage");
+    }
+    expect(message.message.value.message.case).toBe("mcpArgs");
+    if (message.message.value.message.case !== "mcpArgs") {
+      throw new Error("expected mcpArgs");
+    }
+    expect(toJson(ValueSchema, message.message.value.message.value.args.numResults!)).toBe(10);
+    expect(toJson(ValueSchema, message.message.value.message.value.args.query!)).toBe("cursor rpc");
   });
 
   it("round-trips RunWebFetch error with is_timeout", () => {

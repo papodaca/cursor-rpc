@@ -3,6 +3,7 @@ syntax = "proto3";
 package agent.v1;
 
 import "aiserver/v1/models.proto";
+import "google/protobuf/struct.proto";
 
 message AgentClientMessage {
   oneof message {
@@ -339,7 +340,9 @@ message ExecClientMessage {
 
 message McpArgs {
   string name = 1;
-  map<string, bytes> args = 2;
+  // Live Agent Run JSON sends native values (numbers, strings, objects), not
+  // base64 bytes. google.protobuf.Value matches that JSON mapping.
+  map<string, google.protobuf.Value> args = 2;
   optional string tool_call_id = 4;
   string tool_name = 5;
 }
