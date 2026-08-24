@@ -1,6 +1,8 @@
 # cursor-rpc-pi
 
-This is a protocol-SDK provider for [Pi](https://github.com/mariozechner/pi-mono). It is not `@cursor/sdk`, not a community `cursor` provider, and not a local Cursor agent. Pi owns the agent loop; Cursor is the model over `cursor-rpc`.
+A [Pi](https://github.com/mariozechner/pi-mono) provider that uses `cursor-rpc` as the model backend. Pi owns the agent loop. Cursor answers the model calls.
+
+People keep grabbing `@cursor/sdk` or a community `cursor` provider and expecting this. Those use other provider ids and a different login.
 
 ## Install
 
@@ -8,13 +10,13 @@ This is a protocol-SDK provider for [Pi](https://github.com/mariozechner/pi-mono
 pi install npm:cursor-rpc-pi
 ```
 
-Or load from a checkout:
+From a checkout:
 
 ```bash
 pi -e ./packages/cursor-rpc-pi
 ```
 
-Requires Node.js 22.19 or newer. The provider id is `cursor-rpc`. Models use the custom API id `cursor-connectrpc`.
+Node.js 22.19 or newer. Provider id is `cursor-rpc`. Models use the custom API id `cursor-connectrpc`.
 
 ## Auth
 
@@ -24,13 +26,13 @@ Headless:
 export CURSOR_API_KEY=YOUR_CURSOR_API_KEY
 ```
 
-Interactive login (authorization URL only; no browser is opened from `streamSimple`):
+Interactive login prints an authorization URL. `streamSimple` will not open a browser for you.
 
 ```
 /login cursor-rpc
 ```
 
-Then pick a model:
+Then:
 
 ```
 /model cursor-rpc/MODEL_ID
@@ -40,14 +42,8 @@ v1 does not add usage, doctor, or extra slash commands.
 
 ## Privacy
 
-Prompts, tool schemas, and tool results are sent to Cursor. Do not paste live API keys, JWTs, or poll verifiers into issues or docs.
+Prompts, tool schemas, and tool results go to Cursor. Do not paste live API keys, JWTs, or poll verifiers into issues or docs.
 
-## Identity
+## Packages people mix up
 
-| Package | Role |
-| --- | --- |
-| `cursor-rpc-pi` | This Pi package: provider plugin for Pi |
-| `cursor-rpc` | Protocol library used by this plugin (not a Pi package) |
-| `cursor-rpc-pi-tools` | Sibling Pi package: `web_fetch` / `web_search` tools |
-| `@cursor/sdk` | Unrelated Cursor product SDK |
-| community `cursor` providers | Different provider ids and auth flows |
+`cursor-rpc-pi` is this plugin. `cursor-rpc` is the protocol library and is not a Pi package. `cursor-rpc-pi-tools` registers `web_fetch` and `web_search`. `@cursor/sdk` is a different Cursor product. Community `cursor` providers use other ids and auth flows.

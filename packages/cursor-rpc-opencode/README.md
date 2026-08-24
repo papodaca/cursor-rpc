@@ -1,26 +1,28 @@
 # cursor-rpc-opencode
 
-OpenCode LanguageModelV3 provider wrapping `cursor-rpc`. Requires **Node.js 22** or later.
+OpenCode LanguageModelV3 provider that calls `cursor-rpc`. Node.js 22 or later.
 
-Cursor is the language-model backend. **OpenCode owns session, tools, permissions, and workspace.** Cursor local exec is fail-closed: this package does not run shell or file tools on Cursor's side.
+Cursor is the language model. OpenCode owns the session, tools, permissions, and workspace. This package will not run shell or file tools on Cursor's side. Fail closed.
 
-Build the package before a local `file://` install:
+## Install
+
+Build before a local `file://` install:
 
 ```bash
 npm run build -w cursor-rpc-opencode
 ```
 
-Point `provider.cursor.npm` (v1) or `providers.cursor.package` (v2) at an absolute `file://` URL to the built package root (`packages/cursor-rpc-opencode`). Bun cannot import a directory without a root `index.js`, so use that package root (or `dist/index.js`) for the factory.
+Point `provider.cursor.npm` on OpenCode v1, or `providers.cursor.package` on v2, at an absolute `file://` URL to the built package root, `packages/cursor-rpc-opencode`. Bun cannot import a directory that has no root `index.js`. Use that package root, or `dist/index.js`, for the factory.
 
-Point `plugin` / `plugins` at the **plugin entry** (`plugin.js` or `dist/plugin.js`), not the factory. OpenCode treats every export on the plugin module as a plugin function.
+Point `plugin` or `plugins` at `plugin.js` or `dist/plugin.js`. Not the factory. OpenCode treats every export on the plugin module as a plugin function, so the factory file is the wrong entry.
 
-Provider id can be **`cursor`** or another key such as **`cursor-rpc`**. The package exports `createCursor` (the factory OpenCode loads from the first `create*` export) and a function `plugin` that returns a v1 `config` hook plus an `auth` hook. The config hook overlays the signed-in usable catalogue on any provider block whose `npm` / `package` points at this package.
+The provider id can be `cursor`. The examples use `cursor-rpc`. The package exports `createCursor`, which is the factory OpenCode loads from the first `create*` export, and `plugin`, which returns a v1 `config` hook and an `auth` hook. The config hook overlays the signed-in usable catalogue on any provider block whose `npm` or `package` field points at this package.
 
-Sign in with OpenCode's login flow: `opencode auth login` or `/connect`, then pick the provider id from config (**`cursor-rpc`** in the examples below). Tokens are stored in OpenCode's auth store under that same id. You can still set `options.apiKey` / `settings.apiKey`, or export `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN`. Generate and catalogue overlay never start interactive authentication.
+Sign in with `opencode auth login` or `/connect`, then pick the provider id from config. Tokens land in OpenCode's auth store under that same id. You can also set `options.apiKey` or `settings.apiKey`, or export `CURSOR_API_KEY` or `CURSOR_AUTH_TOKEN`. Catalogue overlay and generate never start an interactive login.
 
 Missing credentials fail closed.
 
-**An empty `models` map silently skips the package.** Install with at least one static seed (shown below). When credentials work, the plugin **replaces** that seed with live usable rows from `client.models()`. If overlay fails (auth, empty catalogue, transport, timeout), the seed stays.
+An empty `models` map silently skips the package. That one bit me. Put at least one static seed in config, like the examples. When credentials work, the plugin replaces that seed with live rows from `client.models()`. If overlay fails because of auth, an empty catalogue, transport, or timeout, the seed stays.
 
 ## OpenCode v1
 
@@ -46,7 +48,7 @@ Missing credentials fail closed.
 }
 ```
 
-After plugin install, run `opencode auth login` and choose Cursor. You can also set `options.apiKey` or export `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN`.
+After the plugin is installed, run `opencode auth login` and choose Cursor. Or set `options.apiKey`, or export `CURSOR_API_KEY` or `CURSOR_AUTH_TOKEN`.
 
 ## OpenCode v2
 
@@ -74,7 +76,7 @@ After plugin install, run `opencode auth login` and choose Cursor. You can also 
 }
 ```
 
-`settings` is the v2 options bag. Catalogue rows advertise `capabilities.tools` from the same tools-supported signal as v1 `tool_call`.
+`settings` is the v2 options bag. Catalogue rows set `capabilities.tools` from the same tools-supported signal that v1 calls `tool_call`.
 
 ## Factory
 
