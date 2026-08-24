@@ -57,7 +57,7 @@ export async function streamCursorRun(options: {
   client: CursorRpcClient;
   modelId: string;
   call: LanguageModelV3CallOptions;
-  /** Test-only AGENT probe. Shipped `doStream` omits this so the Run stays ASK. */
+  /** Optional override. Shipped `doStream` uses AGENT when OpenCode tools are advertised. */
   mode?: ProbeRunMode;
 }): Promise<LanguageModelV3StreamResult> {
   const mapped = mapPrompt(options.call.prompt);
@@ -169,9 +169,9 @@ function clientRunOptions(
   if (mcpTools !== undefined) {
     options.mcpTools = mcpTools;
   }
-  if (mode === "agent") {
+  if (mode === "agent" || mcpTools !== undefined) {
     options.mode = "agent";
-  } else if (mcpTools !== undefined) {
+  } else if (mode === "ask") {
     options.mode = "ask";
   }
   return options;

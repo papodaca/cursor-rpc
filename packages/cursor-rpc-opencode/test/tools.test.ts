@@ -272,7 +272,7 @@ describe("OpenCode tools through Cursor MCP", () => {
       ],
     });
 
-    expect(captured?.mode).toBe("ask");
+    expect(captured?.mode).toBe("agent");
     expect(captured?.handlers).toBeUndefined();
     expect(captured?.handlers?.onExec).toBeUndefined();
     const tools = captured?.mcpTools ?? [];
@@ -593,7 +593,7 @@ describe("OpenCode tools through Cursor MCP", () => {
     expect(finishes(collected.parts)).toHaveLength(0);
   });
 
-  it("AGENT probe via streamCursorRun mode does not apply a shell result and shipped doStream stays ASK", async () => {
+  it("AGENT probe via streamCursorRun mode does not apply a shell result and shipped doStream stays AGENT with tools", async () => {
     const outbound: AgentClientMessage[] = [];
     const client = testClient({
       openRun: async function* (messages) {
@@ -651,11 +651,11 @@ describe("OpenCode tools through Cursor MCP", () => {
       return completedHandle([{ type: "turn_ended", usage: {} }]);
     });
     await shippedModel.doStream({ prompt: [user("hi")], tools: [WRITE_TOOL] });
-    expect(shipped?.mode).toBe("ask");
+    expect(shipped?.mode).toBe("agent");
     client.close();
   });
 
-  it("rejects mcp_auth_request_query on a tool-mapped ASK turn without a V3 tool-call or login()", async () => {
+  it("rejects mcp_auth_request_query on a tool-mapped turn without a V3 tool-call or login()", async () => {
     const loginSpy = vi.spyOn(await import("cursor-rpc"), "login");
     const outbound: AgentClientMessage[] = [];
     const client = testClient({
@@ -710,7 +710,7 @@ describe("OpenCode tools through Cursor MCP", () => {
     if (outbound[0]?.message.case === "runRequest") {
       const action = outbound[0].message.value.action?.action;
       if (action?.case === "userMessageAction") {
-        expect(action.value.userMessage?.mode).toBe(AgentMode.ASK);
+        expect(action.value.userMessage?.mode).toBe(AgentMode.AGENT);
       }
     }
     client.close();
