@@ -6,6 +6,8 @@ import { CursorLanguageModel } from "./language-model.js";
 export type CursorProviderSettings = {
   name?: string;
   apiKey?: string;
+  authToken?: string;
+  credentials?: { accessToken: string; refreshToken: string };
   fetch?: NonNullable<CreateClientOptions["fetch"]>;
   headers?: Headers | Record<string, string>;
   abortSignal?: AbortSignal;
@@ -32,6 +34,8 @@ export function createCursor(settings: CursorProviderSettings = {}): CursorProvi
     client = created;
     lastInputs = {
       apiKey: settings.apiKey,
+      authToken: settings.authToken,
+      credentials: settings.credentials,
       fetch: settings.fetch,
       env: settings.env,
       headers: settings.headers,

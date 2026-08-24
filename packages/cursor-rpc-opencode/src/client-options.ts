@@ -9,6 +9,8 @@ const OPENCODE_CLIENT_VERSION = "cli-1.0.0";
 
 export type ProviderClientSettings = {
   apiKey?: string;
+  authToken?: string;
+  credentials?: { accessToken: string; refreshToken: string };
   fetch?: NonNullable<CreateClientOptions["fetch"]>;
   env?: Record<string, string | undefined>;
   headers?: Headers | Record<string, string>;
@@ -21,8 +23,13 @@ export function resolvedClientOptions(settings: ProviderClientSettings): CreateC
     clientType: settings.clientType ?? OPENCODE_CLIENT_TYPE,
     clientVersion: settings.clientVersion ?? OPENCODE_CLIENT_VERSION,
   };
-  if (settings.apiKey !== undefined) {
+  if (settings.credentials !== undefined) {
+    options.credentials = settings.credentials;
+  } else if (settings.apiKey !== undefined) {
     options.apiKey = settings.apiKey;
+  }
+  if (settings.authToken !== undefined) {
+    options.authToken = settings.authToken;
   }
   if (settings.fetch !== undefined) {
     options.fetch = settings.fetch;
@@ -40,6 +47,9 @@ export function resolvedClientOptions(settings: ProviderClientSettings): CreateC
 export function sameSettingsInputs(left: ProviderClientSettings, right: ProviderClientSettings): boolean {
   return (
     left.apiKey === right.apiKey &&
+    left.authToken === right.authToken &&
+    left.credentials?.accessToken === right.credentials?.accessToken &&
+    left.credentials?.refreshToken === right.credentials?.refreshToken &&
     left.fetch === right.fetch &&
     left.env === right.env &&
     left.headers === right.headers &&

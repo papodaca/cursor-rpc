@@ -52,7 +52,7 @@ export async function overlayCursorCatalogue(
 async function overlayOrKeepSeed(cfg: OpenCodeConfig, options: CatalogueOverlayOptions): Promise<void> {
   const env = resolveEnv(cfg, options);
   const apiKey = resolveApiKey(cfg, options);
-  if (!hasOverlayCredentials(apiKey, env)) {
+  if (!hasOverlayCredentials(apiKey, env, options)) {
     return;
   }
 
@@ -159,8 +159,15 @@ function resolveEnv(
 function hasOverlayCredentials(
   apiKey: string | undefined,
   env: Record<string, string | undefined>,
+  options: CatalogueOverlayOptions = {},
 ): boolean {
-  return nonEmpty(apiKey) || nonEmpty(env.CURSOR_API_KEY) || nonEmpty(env.CURSOR_AUTH_TOKEN);
+  return (
+    nonEmpty(apiKey) ||
+    nonEmpty(options.authToken) ||
+    nonEmpty(options.credentials?.accessToken) ||
+    nonEmpty(env.CURSOR_API_KEY) ||
+    nonEmpty(env.CURSOR_AUTH_TOKEN)
+  );
 }
 
 function modelRowName(model: ModelDetails, id: string): string {
@@ -184,6 +191,8 @@ function buildClientOptions(
   return resolvedClientOptions({
     env,
     apiKey,
+    authToken: pluginOptions.authToken ?? settings?.authToken,
+    credentials: pluginOptions.credentials ?? settings?.credentials,
     fetch: pluginOptions.fetch ?? settings?.fetch,
     headers: pluginOptions.headers ?? settings?.headers,
   });

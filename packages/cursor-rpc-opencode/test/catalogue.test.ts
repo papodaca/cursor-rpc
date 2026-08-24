@@ -85,7 +85,10 @@ describe("cursorPlugin catalogue overlay", () => {
     const pluginMod = await import("../src/plugin.ts");
     expect(typeof pluginMod.plugin).toBe("function");
     expect(pluginMod.plugin.name.startsWith("create")).toBe(false);
-    expect(pluginMod.plugin()).toEqual({ config: expect.any(Function) });
+    expect(pluginMod.plugin()).toEqual({
+      auth: expect.objectContaining({ provider: "cursor-rpc" }),
+      config: expect.any(Function),
+    });
     expect("plugin" in factory).toBe(false);
     const createKeys = Object.keys(factory).filter((key) => key.startsWith("create"));
     expect(createKeys).toEqual(["createCursor"]);
@@ -280,6 +283,7 @@ describe("README install docs", () => {
     expect(readme).toMatch(/fail-closed|fail closed/i);
     expect(readme).not.toMatch(/npm link/);
     expect(readme).not.toContain("~/.local/share/opencode");
-    expect(readme).toMatch(/never opens a browser|interactive authentication/i);
+    expect(readme).toMatch(/opencode auth login/i);
+    expect(readme).toMatch(/never start interactive authentication|interactive authentication/i);
   });
 });

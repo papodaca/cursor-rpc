@@ -175,6 +175,21 @@ describe("createCursor factory", () => {
     });
   });
 
+  it("forwards OpenCode-stored oauth credentials and does not treat them as an API key", async () => {
+    const fetch = failingFetch();
+    const credentials = { accessToken: "access-jwt", refreshToken: "refresh-jwt" };
+    const provider = createCursor({
+      apiKey: "key_should_be_ignored",
+      credentials,
+      env: {},
+      fetch,
+    });
+    await provider.languageModel("composer").doGenerate({ prompt: [] }).catch(() => undefined);
+    const options = vi.mocked(createClient).mock.lastCall?.[0];
+    expect(options?.credentials).toEqual(credentials);
+    expect(options?.apiKey).toBeUndefined();
+  });
+
   it("constructs one client per factory and close() disposes without an abort signal", async () => {
     const fetch = failingFetch();
     const provider = createCursor({ apiKey: "key_ok", env: {}, fetch });
